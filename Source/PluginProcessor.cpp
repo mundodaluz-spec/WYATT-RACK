@@ -556,6 +556,17 @@ void WyattRackProcessor::setStateInformation (const void* data, int size)
         state.removeChild (extra, nullptr);
     }
     apvts.replaceState (state);
+    // O JUCE pula parâmetros cujo valor guardado em cache já parece igual; um liga/desliga que o host deixou em 0,58
+    // ficaria assim. Aqui cada parâmetro recebe explicitamente o valor salvo.
+    for (auto child : state)
+    {
+        if (! child.hasType ("PARAM")) continue;
+        if (auto* prm = apvts.getParameter (child.getProperty ("id").toString()))
+        {
+            const float n = prm->convertTo0to1 ((float) (double) child.getProperty ("value"));
+            if (std::abs (prm->getValue() - n) > 1e-6f) prm->setValueNotifyingHost (n);
+        }
+    }
     undoStack.clear(); redoStack.clear();
     sendChangeMessage();
 }

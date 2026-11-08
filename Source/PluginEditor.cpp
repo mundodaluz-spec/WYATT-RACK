@@ -542,7 +542,8 @@ void WyattRackEditor::submitPrompt()
 
 void WyattRackEditor::openSettings()
 {
-    settings = std::make_unique<SettingsPanel> (proc, [this] { juce::MessageManager::callAsync ([sp = juce::Component::SafePointer<WyattRackEditor> (this)] { if (sp) sp->closeSettings(); }); });
+    juce::Component::SafePointer<WyattRackEditor> safe (this);
+    settings = std::make_unique<SettingsPanel> (proc, [safe] { juce::MessageManager::callAsync ([safe] { if (safe != nullptr) safe->closeSettings(); }); });
     addAndMakeVisible (*settings);
     settings->setBounds (getLocalBounds());
 }
