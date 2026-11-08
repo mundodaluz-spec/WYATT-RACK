@@ -1,0 +1,32 @@
+WYATT RACK 1.0 — WYATT Sounds
+Fale o som, o rack monta.
+
+INSTALAR
+  Windows: copie "WYATT RACK.vst3" para C:\Program Files\Common Files\VST3
+  Mac:     copie "WYATT RACK.vst3" para /Library/Audio/Plug-Ins/VST3
+           e "WYATT RACK.component" para /Library/Audio/Plug-Ins/Components
+  Depois, peça para a sua DAW procurar plugins novos.
+
+COMO USAR
+  1. Coloque o WYATT RACK numa faixa, num bus ou no master.
+  2. Escreva o que quer ouvir e aperte Enter ou CRIAR. Exemplos:
+       voz quente, na cara, com reverb de igreja
+       voz estilo Fernandinho
+       bateria suja e larga
+       delay 1/8 pontuado ping pong
+       compressor com ratio 4 e ataque 10 ms
+       mais brilho / menos reverb / sem delay / zera tudo
+  3. Ajuste os knobs à vontade. Tudo é automatizável na DAW.
+  4. DESFAZER/REFAZER voltam qualquer mudança. BIBLIOTECA tem 22 presets
+     de fábrica e os seus tratamentos salvos.
+
+IA HÍBRIDA
+  OFFLINE  — só o cérebro do plugin: na hora, sem internet.
+  HÍBRIDO  — o cérebro do plugin resolve o que entende; pedidos livres e
+             criativos vão para a IA avançada (precisa de internet e chave).
+  ONLINE   — todo pedido vai para a IA avançada.
+  A IA avançada só escolhe os blocos e os valores. O som é sempre feito
+  pelo próprio plugin; nenhum áudio sai do seu computador.
+  Configure a chave no botão "⚙ IA".
+
+Contato e suporte: WhatsApp (27) 99926-5692

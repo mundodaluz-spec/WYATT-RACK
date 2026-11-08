@@ -1,0 +1,93 @@
+name: WYATT RACK — compilar e testar
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: Windows
+          - os: macos-14
+            name: macOS
+          - os: ubuntu-22.04
+            name: Linux
+    runs-on: ${{ matrix.os }}
+    name: ${{ matrix.name }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: JUCE 8.0.4
+        run: git clone --depth 1 --branch 8.0.4 https://github.com/juce-framework/JUCE.git ../JUCE
+
+      - name: Dependências (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libx11-dev libxinerama-dev libxext-dev libxrandr-dev libxcursor-dev \
+            libfreetype6-dev libfontconfig1-dev libcurl4-openssl-dev libgl1-mesa-dev xvfb ninja-build
+
+      - name: Configurar
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" == "Linux" ]; then GEN="-G Ninja"; else GEN=""; fi
+          cmake -S . -B build $GEN -DCMAKE_BUILD_TYPE=Release
+
+      - name: Compilar
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Testes do motor e do cérebro
+        shell: bash
+        run: |
+          EXE=$(find build -type f \( -name CoreTests -o -name CoreTests.exe \) | head -1)
+          "$EXE"
+
+      - name: Testes de integração (processador, IA híbrida, tela)
+        shell: bash
+        run: |
+          EXE=$(find build -type f \( -name PluginTests -o -name PluginTests.exe \) -path "*Release*" | head -1)
+          mkdir -p capturas
+          if [ "$RUNNER_OS" == "Linux" ]; then xvfb-run -a "$EXE" capturas; else "$EXE" capturas; fi
+
+      - name: pluginval (nível 7)
+        shell: bash
+        run: |
+          VST3=$(find build -type d -name "WYATT RACK.vst3" | head -1)
+          if [ "$RUNNER_OS" == "Windows" ]; then
+            curl -sSL -o pv.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip
+            unzip -q pv.zip; ./pluginval.exe --strictness-level 7 --validate-in-process "$VST3"
+          elif [ "$RUNNER_OS" == "macOS" ]; then
+            curl -sSL -o pv.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
+            unzip -q pv.zip; ./pluginval.app/Contents/MacOS/pluginval --strictness-level 7 --validate-in-process "$VST3"
+            AU=$(find build -type d -name "WYATT RACK.component" | head -1)
+            mkdir -p ~/Library/Audio/Plug-Ins/Components && cp -R "$AU" ~/Library/Audio/Plug-Ins/Components/
+            ./pluginval.app/Contents/MacOS/pluginval --strictness-level 7 --validate-in-process ~/Library/Audio/Plug-Ins/Components/"WYATT RACK.component"
+          else
+            curl -sSL -o pv.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Linux.zip
+            unzip -q pv.zip; xvfb-run -a ./pluginval --strictness-level 7 --validate-in-process "$VST3"
+          fi
+
+      - name: Empacotar
+        shell: bash
+        run: |
+          mkdir -p dist
+          ART=$(find build -type d -name "Release" -path "*WyattRack_artefacts*" | head -1)
+          cp -R "$ART/VST3/WYATT RACK.vst3" dist/
+          if [ -d "$ART/AU" ]; then cp -R "$ART/AU/WYATT RACK.component" dist/; fi
+          if [ -d "$ART/Standalone" ]; then cp -R "$ART/Standalone/"* dist/; fi
+          cp LEIA-ME.txt dist/ || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: WYATT-RACK-${{ matrix.name }}
+          path: dist
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: capturas-${{ matrix.name }}
+          path: capturas
