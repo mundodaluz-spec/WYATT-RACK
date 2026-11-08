@@ -65,6 +65,11 @@ jobs:
             unzip -q pv.zip; ./pluginval.app/Contents/MacOS/pluginval --strictness-level 7 --validate-in-process "$VST3"
             AU=$(find build -type d -name "WYATT RACK.component" | head -1)
             mkdir -p ~/Library/Audio/Plug-Ins/Components && cp -R "$AU" ~/Library/Audio/Plug-Ins/Components/
+            codesign --force --deep -s - ~/Library/Audio/Plug-Ins/Components/"WYATT RACK.component"
+            killall -9 AudioComponentRegistrar || true
+            sleep 3
+            auval -a | grep -i wyatt || true
+            auval -v aufx WyRk Wytt
             ./pluginval.app/Contents/MacOS/pluginval --strictness-level 7 --validate-in-process ~/Library/Audio/Plug-Ins/Components/"WYATT RACK.component"
           else
             curl -sSL -o pv.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Linux.zip
