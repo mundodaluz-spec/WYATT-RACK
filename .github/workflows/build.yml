@@ -80,7 +80,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          ART=$(find build -type d -name "Release" -path "*WyattRack_artefacts*" | head -1)
+          ART="build/WyattRack_artefacts/Release"; ls -la "$ART"
           cp -R "$ART/VST3/WYATT RACK.vst3" dist/
           if [ -d "$ART/AU" ]; then cp -R "$ART/AU/WYATT RACK.component" dist/; fi
           if [ -d "$ART/Standalone" ]; then cp -R "$ART/Standalone/"* dist/; fi
