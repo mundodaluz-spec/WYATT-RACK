@@ -31,7 +31,11 @@ void Slot::readTargets (float* out, int type) const
     for (int i = 0; i < kNumParams; ++i)
     {
         const auto& ps = bi.params[(size_t) i];
-        out[i] = ps.used() && params.p[i] ? ps.toReal (params.p[i]->load (std::memory_order_relaxed)) : 0.0f;
+        if (! ps.used() || params.p[i] == nullptr) { out[i] = 0.0f; continue; }
+        float n = params.p[i]->load (std::memory_order_relaxed);
+        if (macros != nullptr && (ps.scale == Scale::Linear || ps.scale == Scale::Log))
+            n = std::clamp (n + macros->offset (index, i), 0.0f, 1.0f);
+        out[i] = ps.toReal (n);
     }
 }
 
@@ -46,7 +50,7 @@ void Slot::process (float* L, float* R, int n, const Ctx& ctx)
     if (params.type == nullptr) return;
     const int targetType = std::clamp ((int) std::lround (params.type->load()), 0, kNumTypes - 1);  // índice do tipo
     const bool onT = params.on == nullptr || params.on->load() >= 0.5f;
-    const float mixT = params.mix ? std::clamp (params.mix->load() / 100.0f, 0.0f, 1.0f) : 1.0f;
+    const float mixT = params.mix ? std::clamp (params.mix->load() / 100.0f + (macros ? macros->offset (index, kNumParams) : 0.0f), 0.0f, 1.0f) : 1.0f;
 
     float tgt[kNumParams];
     if (first)

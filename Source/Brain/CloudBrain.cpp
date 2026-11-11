@@ -29,7 +29,66 @@ juce::var treatmentToVar (const Treatment& t)
     }
     auto* root = new juce::DynamicObject();
     root->setProperty ("blocos", arr);
+    if (t.hasMacros())
+    {
+        juce::Array<juce::var> ms;
+        for (auto& m : t.macros)
+        {
+            auto* mo = new juce::DynamicObject();
+            mo->setProperty ("nome", juce::String::fromUTF8 (m.name.c_str()));
+            mo->setProperty ("valor", (double) std::round (m.value * 1000) / 1000);
+            juce::Array<juce::var> alvos;
+            for (auto& tg : m.targets)
+            {
+                if (tg.block < 0 || tg.block >= (int) t.blocks.size()) continue;
+                auto* a = new juce::DynamicObject();
+                a->setProperty ("bloco", tg.block);
+                a->setProperty ("param", tg.param == kMacroMix ? juce::String ("mix")
+                                                               : juce::String (info (t.blocks[(size_t) tg.block].type).params[(size_t) tg.param].key));
+                a->setProperty ("quanto", (double) std::round (tg.depth * 1000) / 1000);
+                alvos.add (juce::var (a));
+            }
+            mo->setProperty ("alvos", alvos);
+            ms.add (juce::var (mo));
+        }
+        root->setProperty ("macros", ms);
+    }
     return juce::var (root);
+}
+
+int macrosFromVar (const juce::var& list, Treatment& out)
+{
+    out.macros = {};
+    if (! list.isArray()) return 0;
+    int mi = 0;
+    for (auto& item : *list.getArray())
+    {
+        if (mi >= kNumMacros) break;
+        Macro m;
+        m.name = item.getProperty ("nome", item.getProperty ("name", "")).toString().trim().toUpperCase().substring (0, 12).toStdString();
+        const auto v = item.getProperty ("valor", item.getProperty ("value", 0.5));
+        m.value = juce::jlimit (0.0f, 1.0f, (float) (double) v);
+        if (auto* alvos = item.getProperty ("alvos", item.getProperty ("targets", juce::var())).getArray())
+            for (auto& a : *alvos)
+            {
+                const int b = (int) a.getProperty ("bloco", a.getProperty ("block", -1));
+                if (b < 0 || b >= (int) out.blocks.size()) continue;
+                const auto pn = a.getProperty ("param", "").toString();
+                const int type = out.blocks[(size_t) b].type;
+                const int pi = pn.trim().equalsIgnoreCase ("mix") ? kMacroMix : paramFromName ((BlockType) type, pn.toStdString());
+                if (pi != kMacroMix && pi < 0) continue;
+                m.targets.push_back ({ b, pi, juce::jlimit (-1.0f, 1.0f, (float) (double) a.getProperty ("quanto", a.getProperty ("depth", 0.0))) });
+            }
+        if (m.name.empty()) m.name = "MACRO " + std::to_string (mi + 1);
+        out.macros[(size_t) mi] = m;
+        ++mi;
+    }
+    out.sanitizeMacros();
+    // compacta: macros vazias (todos os alvos inválidos) saem e as outras sobem
+    std::array<Macro, kNumMacros> packed; int n = 0;
+    for (auto& m : out.macros) if (m.used()) packed[(size_t) n++] = m;
+    out.macros = packed;
+    return n;
 }
 
 static float numberFrom (const juce::var& v, const ParamSpec& sp, bool& ok)
@@ -96,6 +155,7 @@ bool treatmentFromVar (const juce::var& v, Treatment& out, juce::String& error)
         out.blocks.push_back (b);
     }
     if (out.blocks.empty() && list->size() > 0) return false;
+    if (! v.isArray()) macrosFromVar (v.getProperty ("macros", juce::var()), out);
     error.clear();
     return true;
 }
@@ -116,6 +176,10 @@ juce::String CloudBrain::systemPrompt()
          "Se for um pedido novo, monte do zero.\n"
          "- Se o pedido for para zerar/limpar tudo, devolva \"zerar\": true e blocos vazios.\n"
          "- Pense em como um engenheiro de mixagem experiente chegaria nesse som (inclusive em produções gospel, sertanejo, trap, funk e adoração).\n"
+         "- \"macros\": crie de 2 a 4 knobs de macro com nomes curtos em MAIÚSCULAS, do jeito que um músico falaria (ex.: PESO, BRILHO, PRESSÃO, CALOR, ESPAÇO, MOJO, PEGADA, FANTASMA). "
+         "Cada macro move vários parâmetros juntos: \"alvos\" lista {bloco: posição do bloco na sua lista, começando em 0; param: nome do parâmetro ou \"mix\"; quanto: de -0.5 a 0.5}. "
+         "\"quanto\" é a fração da faixa do parâmetro que ele anda quando o knob vai do meio até o fim (negativo = anda ao contrário; ex.: mais PRESSÃO = limiar do compressor mais baixo). "
+         "O knob começa no meio (o som que você montou) e o usuário gira para os dois lados. Escolha macros que façam sentido para ESTE pedido. Não use parâmetros de escolha (TIPO, SINC, FORMA, MODO, VOZES) nem liga/desliga.\n"
          "- \"explicacao\": 1 ou 2 frases curtas em português do Brasil, no tom de um técnico de estúdio, dizendo o que você montou e por quê.\n\n"
          "Catálogo de blocos (tipo: descrição; parâmetros com unidade, faixa e padrão):\n");
     for (int t = 1; t < kNumTypes; ++t)
@@ -168,9 +232,29 @@ static juce::var outputSchema()
             "required": ["tipo", "ligado", "mix", "params"],
             "additionalProperties": false
           }
+        },
+        "macros": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "nome": { "type": "string" },
+              "alvos": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": { "bloco": { "type": "integer" }, "param": { "type": "string" }, "quanto": { "type": "number" } },
+                  "required": ["bloco", "param", "quanto"],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": ["nome", "alvos"],
+            "additionalProperties": false
+          }
         }
       },
-      "required": ["explicacao", "zerar", "blocos"],
+      "required": ["explicacao", "zerar", "blocos", "macros"],
       "additionalProperties": false
     })";
     return juce::JSON::parse (json);

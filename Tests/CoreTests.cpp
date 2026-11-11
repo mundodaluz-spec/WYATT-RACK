@@ -2,6 +2,7 @@
 #include "../Source/Engine/Rack.h"
 #include "../Source/Engine/Dsp.h"
 #include "../Source/Brain/LocalBrain.h"
+#include "../Source/Brain/Macros.h"
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -20,6 +21,7 @@ struct TestRack
     Rack rack;
     std::atomic<float> type[kNumSlots], on[kNumSlots], mix[kNumSlots], p[kNumSlots][kNumParams];
     std::atomic<float> inDb { 0 }, outDb { 0 }, byp { 0 };
+    std::atomic<float> mval[kNumMacros];
     double sr;
 
     explicit TestRack (double s = 48000, int block = 256) : sr (s)
@@ -32,6 +34,7 @@ struct TestRack
             for (int k = 0; k < kNumParams; ++k) { p[i][k] = 0; sp.p[k] = &p[i][k]; }
         }
         rack.inGainDb = &inDb; rack.outGainDb = &outDb; rack.bypass = &byp;
+        for (int m = 0; m < kNumMacros; ++m) { mval[m] = 50; rack.macros.value[m] = &mval[m]; }
         rack.prepare (sr, block);
     }
     void setBlock (int slot, const BlockState& b)
@@ -45,6 +48,16 @@ struct TestRack
     {
         for (int i = 0; i < kNumSlots; ++i) type[i] = 0;
         for (size_t i = 0; i < t.blocks.size() && i < (size_t) kNumSlots; ++i) setBlock ((int) i, t.blocks[i]);
+        rack.macros.clear();
+        for (int m = 0; m < kNumMacros; ++m)
+        {
+            mval[m] = t.macros[(size_t) m].value * 100.0f;
+            for (auto& tg : t.macros[(size_t) m].targets)
+            {
+                auto& a = rack.macros.depth[m][tg.block][tg.param == kMacroMix ? kNumParams : tg.param];
+                a.store (a.load() + tg.depth);
+            }
+        }
     }
     void run (std::vector<float>& L, std::vector<float>& R, int block = 256, double bpm = 120)
     {
@@ -337,10 +350,143 @@ static void brainTests()
     }
 }
 
+static void macroTests()
+{
+    std::printf ("== Macros\n");
+    LocalBrain brain;
+    const double sr = 48000;
+
+    // 1) macros automáticas a partir do pedido
+    auto t = brain.interpret ("voz quente, na cara, com reverb de igreja", {}).treatment;
+    autoMacros (t, "voz quente, na cara, com reverb de igreja");
+    std::string names;
+    int used = 0;
+    for (auto& m : t.macros) if (m.used()) { ++used; names += m.name + " "; }
+    CHECK (used >= 3, "voz quente/igreja deveria ter 3 ou 4 macros (%s)\n", names.c_str());
+    CHECK (names.find ("ESPAÇO") != std::string::npos && names.find ("PRESSÃO") != std::string::npos, "macros de espaço e pressão (%s)\n", names.c_str());
+    CHECK (names.find ("CALOR") != std::string::npos, "\"quente\" puxa CALOR (%s)\n", names.c_str());
+    bool valid = true;
+    for (auto& m : t.macros) for (auto& tg : m.targets)
+        if (tg.block < 0 || tg.block >= (int) t.blocks.size() || ! macroCanTarget (t.blocks[(size_t) tg.block].type, tg.param)) valid = false;
+    CHECK (valid, "todos os alvos apontam para blocos e parâmetros contínuos\n");
+    {
+        auto lofi = brain.interpret ("lo-fi", {}).treatment; autoMacros (lofi, "lo-fi");
+        bool suj = false; for (auto& m : lofi.macros) if (m.name == "SUJEIRA") suj = true;
+        CHECK (suj, "lo-fi ganha SUJEIRA\n");
+        auto master = brain.interpret ("master gospel com pressão", {}).treatment; autoMacros (master, "master gospel com pressão");
+        bool pres = false, esp = false; for (auto& m : master.macros) { if (m.name == "PRESSÃO") pres = true; if (m.name == "ESPAÇO") esp = true; }
+        CHECK (pres && ! esp, "master: PRESSÃO sim, ESPAÇO não (sem reverb no master)\n");
+        Treatment vazio; autoMacros (vazio, "qualquer");
+        CHECK (! vazio.hasMacros(), "rack vazio não tem macros\n");
+    }
+
+    // 2) no meio (50%) o som é idêntico ao tratamento sem macros
+    {
+        Treatment semMacro = t; semMacro.macros = {};
+        TestRack a (sr), b (sr);
+        a.setTreatment (t); b.setTreatment (semMacro);
+        auto L1 = sine (220, sr, 1.0), R1 = L1, L2 = L1, R2 = L1;
+        a.run (L1, R1); b.run (L2, R2);
+        bool same = true; for (size_t i = 0; i < L1.size(); ++i) if (L1[i] != L2[i] || R1[i] != R2[i]) { same = false; break; }
+        CHECK (same, "macros no meio = som idêntico\n");
+    }
+
+    // 3) girar a macro = mesmo som que o tratamento "fixado" (baked) sem macros
+    {
+        Treatment girado = t;
+        for (auto& m : girado.macros) m.value = 0.85f;
+        girado.macros[0].value = 0.1f;
+        const Treatment fixado = girado.baked();
+        CHECK (! fixado.hasMacros() && ! (fixado == girado), "fixar tira as macros e muda os valores\n");
+        TestRack a (sr), b (sr);
+        a.setTreatment (girado); b.setTreatment (fixado);
+        auto L1 = sine (220, sr, 1.0), R1 = L1, L2 = L1, R2 = L1;
+        a.run (L1, R1); b.run (L2, R2);
+        float maxd = 0; for (size_t i = 0; i < L1.size(); ++i) maxd = std::max (maxd, std::abs (L1[i] - L2[i]));
+        CHECK (maxd < 1e-4f, "macro girada soa igual ao tratamento fixado (dif. %.6f)\n", maxd);
+        TestRack c (sr); Treatment semMacro = t; semMacro.macros = {}; c.setTreatment (semMacro);
+        auto L3 = sine (220, sr, 1.0), R3 = L3; c.run (L3, R3);
+        float d2 = 0; for (size_t i = 0; i < L1.size(); ++i) d2 = std::max (d2, std::abs (L1[i] - L3[i]));
+        CHECK (d2 > 1e-3f, "girar a macro muda o som de verdade\n");
+    }
+
+    // 4) valores: PESO no máximo sobe o grave do EQ 6 dB
+    {
+        Treatment eq; eq.blocks.push_back (BlockState::defaults (BlockType::EQ));
+        autoMacros (eq, "grave");
+        int peso = -1; for (int m = 0; m < kNumMacros; ++m) if (eq.macros[(size_t) m].name == "PESO") peso = m;
+        CHECK (peso >= 0, "EQ sozinho com \"grave\" tem PESO\n");
+        if (peso >= 0)
+        {
+            eq.macros[(size_t) peso].value = 1.0f;
+            const auto f = eq.baked();
+            CHECK (std::abs (f.blocks[0].p[1] - 6.0f) < 0.01f, "PESO 100%% → grave +6 dB (%.2f)\n", f.blocks[0].p[1]);
+            eq.macros[(size_t) peso].value = 0.0f;
+            CHECK (std::abs (eq.baked().blocks[0].p[1] + 6.0f) < 0.01f, "PESO 0%% → grave −6 dB\n");
+        }
+    }
+
+    // 5) limites: macro nunca empurra parâmetro para fora da faixa
+    {
+        Treatment r; auto rv = BlockState::defaults (BlockType::Reverb); rv.mix = 95; r.blocks.push_back (rv);
+        r.macros[0] = { "ESPAÇO", 1.0f, { { 0, kMacroMix, 0.5f }, { 0, 2, 0.9f } } };
+        const auto f = r.baked();
+        CHECK (f.blocks[0].mix <= 100.0f && f.blocks[0].p[2] <= 12.0f, "mix e decaimento ficam na faixa\n");
+        r.macros[1] = { "RUIM", 0.5f, { { 0, 0, 0.3f }, { 7, 1, 0.3f } } };   // TIPO (escolha) e bloco inexistente
+        r.sanitizeMacros();
+        CHECK (! r.macros[1].used(), "alvos inválidos são descartados (escolha, bloco que não existe)\n");
+    }
+
+    // 6) reorganizar a cadeia leva os alvos junto
+    {
+        Treatment m = t;
+        const int b0 = m.macros[0].targets.empty() ? -1 : m.macros[0].targets[0].block;
+        const int type0 = b0 >= 0 ? m.blocks[(size_t) b0].type : -1;
+        std::vector<int> rev (m.blocks.size());
+        for (size_t i = 0; i < rev.size(); ++i) rev[i] = (int) (rev.size() - 1 - i);
+        std::vector<BlockState> nb (m.blocks.rbegin(), m.blocks.rend());
+        m.blocks = nb; m.remapMacros (rev);
+        CHECK (b0 >= 0 && m.blocks[(size_t) m.macros[0].targets[0].block].type == type0, "alvo segue o bloco depois de inverter a cadeia\n");
+        std::vector<int> drop (m.blocks.size(), 0);
+        for (size_t i = 0; i < drop.size(); ++i) drop[i] = (int) i;
+        const int victim = m.macros[0].targets[0].block;
+        drop[(size_t) victim] = -1;
+        m.remapMacros (drop);
+        bool gone = true; for (auto& mm : m.macros) for (auto& tg : mm.targets) if (tg.block == victim) gone = false;
+        CHECK (gone, "bloco que saiu não tem mais alvo de macro\n");
+    }
+
+    // 7) automação da macro sem clique
+    {
+        Treatment eq; eq.blocks.push_back (BlockState::defaults (BlockType::EQ)); eq.blocks.push_back (BlockState::defaults (BlockType::Saturacao));
+        autoMacros (eq, "peso brilho calor");
+        TestRack a (sr); a.setTreatment (eq);
+        auto L = sine (110, sr, 1.0, 0.4f), R = L;
+        Ctx c; c.bpm = 120;
+        float steadyMax = 0, jumpMax = 0, afterMax = 0;
+        for (size_t off = 0, k = 0; off < L.size(); off += 256, ++k)
+        {
+            if (k == 100) for (int m = 0; m < kNumMacros; ++m) a.mval[m] = 100;   // salto instantâneo do knob
+            const int n = (int) std::min<size_t> (256, L.size() - off);
+            a.rack.process (L.data() + off, R.data() + off, n, c);
+            for (int i = 1; i < n; ++i)
+            {
+                const float d = std::abs (L[off + (size_t) i] - L[off + (size_t) i - 1]);
+                if (k >= 60 && k < 100) steadyMax = std::max (steadyMax, d);
+                if (k >= 100 && k < 110) jumpMax = std::max (jumpMax, d);
+                if (k >= 150 && k < 180) afterMax = std::max (afterMax, d);
+            }
+        }
+        CHECK (afterMax > steadyMax * 1.2f, "macros no máximo mudaram o som (%.4f → %.4f)\n", steadyMax, afterMax);
+        CHECK (jumpMax < std::max (steadyMax, afterMax) * 1.3f, "salto de macro sem clique (passo %.4f; parado antes %.4f, depois %.4f)\n", jumpMax, steadyMax, afterMax);
+    }
+}
+
 int main()
 {
     engineTests();
     brainTests();
+    macroTests();
     std::printf ("\n%d verificações OK, %d falharam\n", passed, failed);
     return failed == 0 ? 0 : 1;
 }

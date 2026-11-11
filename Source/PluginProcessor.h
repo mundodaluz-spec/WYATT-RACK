@@ -5,6 +5,7 @@
 #include "Brain/LocalBrain.h"
 #include "Brain/CloudBrain.h"
 #include "Brain/Analysis.h"
+#include "Brain/Macros.h"
 
 namespace wr
 {
@@ -67,6 +68,14 @@ public:
     void redo();
     void pushUndo();
 
+    // ---- macros
+    static juce::String macroId (int m) { return "macro" + juce::String (m + 1); }
+    juce::String macroName (int m) const;           // "" = macro sem uso
+    juce::String macroTip (int m) const;            // o que ela move
+    bool macroUsed (int m) const { return ! macroDefs[(size_t) m].targets.empty(); }
+    // Fixa no tratamento o que as macros estão fazendo e zera os knobs (o som não muda).
+    void bakeMacros();
+
     // ---- assistente
     void ask (const juce::String& prompt, bool forceOnline = false);
     bool isThinking() const { return thinking.load(); }
@@ -110,6 +119,13 @@ private:
     TrackAnalyzer analyzer;
     juce::AudioBuffer<float> dbuf;
     int currentProgram = 0;
+
+    std::vector<int> occupiedSlots() const;
+    void syncMacroBus();
+    void applyTreatmentRemapped (Treatment t, const std::vector<int>& newIndexOf);
+    std::atomic<float>* macroP[kNumMacros] {};
+    std::array<Macro, kNumMacros> macroDefs;       // alvos com o índice do SLOT
+    juce::String macroContext;                     // palavras que deram nome às macros
 
     LocalBrain brain;
     std::vector<Treatment> undoStack, redoStack;

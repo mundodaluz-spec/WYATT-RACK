@@ -84,6 +84,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout WyattRackProcessor::createLa
     l.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "saida", 1 }, juce::String::fromUTF8 ("Saída"), juce::NormalisableRange<float> (-24, 24, 0.1f), 0.0f,
                                                         juce::AudioParameterFloatAttributes().withLabel ("dB")));
     l.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "bypass", 1 }, "Bypass", false));
+    for (int m = 0; m < kNumMacros; ++m)
+    {
+        auto attr = juce::AudioParameterFloatAttributes().withStringFromValueFunction (
+            [self, m] (float v, int) -> juce::String
+            {
+                const auto nm = self != nullptr ? self->macroName (m) : juce::String();
+                return (nm.isNotEmpty() ? nm + " " : juce::String()) + juce::String (juce::roundToInt (v)) + "%";
+            });
+        l.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { macroId (m), 1 }, "Macro " + juce::String (m + 1),
+                                                            juce::NormalisableRange<float> (0, 100, 0.1f), 50.0f, attr));
+    }
     return l;
 }
 
@@ -104,6 +115,7 @@ WyattRackProcessor::WyattRackProcessor()
     rack.inGainDb = inDb = apvts.getRawParameterValue ("entrada");
     rack.outGainDb = outDb = apvts.getRawParameterValue ("saida");
     rack.bypass = bypassP = apvts.getRawParameterValue ("bypass");
+    for (int m = 0; m < kNumMacros; ++m) rack.macros.value[m] = macroP[m] = apvts.getRawParameterValue (macroId (m));
 
     if (auto s = openSettings()) mode = (AiMode) juce::jlimit (0, 2, s->getIntValue ("modoIA", (int) AiMode::Hibrido));
 }
@@ -183,7 +195,74 @@ Treatment WyattRackProcessor::currentTreatment() const
             b.p[(size_t) k] = bi.params[(size_t) k].used() ? bi.params[(size_t) k].toReal (apvts.getRawParameterValue (slotId (s, key[k]))->load()) : 0.0f;
         t.blocks.push_back (b);
     }
+    // macros: alvos guardados por slot → posição na cadeia
+    const auto occ = occupiedSlots();
+    for (int m = 0; m < kNumMacros; ++m)
+    {
+        const auto& d = macroDefs[(size_t) m];
+        auto& out = t.macros[(size_t) m];
+        out.name = d.name;
+        out.value = macroP[m] ? macroP[m]->load() / 100.0f : 0.5f;
+        for (auto tg : d.targets)
+        {
+            const auto it = std::find (occ.begin(), occ.end(), tg.block);
+            if (it == occ.end()) continue;
+            tg.block = (int) (it - occ.begin());
+            out.targets.push_back (tg);
+        }
+    }
+    t.sanitizeMacros();
     return t;
+}
+
+std::vector<int> WyattRackProcessor::occupiedSlots() const
+{
+    std::vector<int> v;
+    for (int s = 0; s < kNumSlots; ++s) if ((int) apvts.getRawParameterValue (slotId (s, "tipo"))->load() > 0) v.push_back (s);
+    return v;
+}
+
+void WyattRackProcessor::syncMacroBus()
+{
+    rack.macros.clear();
+    for (int m = 0; m < kNumMacros; ++m)
+        for (auto& tg : macroDefs[(size_t) m].targets)
+        {
+            if (tg.block < 0 || tg.block >= kNumSlots) continue;
+            const int k = tg.param == kMacroMix ? kNumParams : tg.param;
+            if (k < 0 || k > kNumParams) continue;
+            auto& a = rack.macros.depth[m][tg.block][k];
+            a.store (a.load() + tg.depth);
+        }
+}
+
+juce::String WyattRackProcessor::macroName (int m) const
+{
+    if (m < 0 || m >= kNumMacros) return {};
+    return juce::String::fromUTF8 (macroDefs[(size_t) m].name.c_str());
+}
+
+juce::String WyattRackProcessor::macroTip (int m) const
+{
+    if (m < 0 || m >= kNumMacros || ! macroUsed (m)) return {};
+    return macroName (m) + juce::String::fromUTF8 (" move: ") + juce::String::fromUTF8 (macroDescription (currentTreatment(), m).c_str())
+         + juce::String::fromUTF8 (". No meio (50%) é o som como foi montado.");
+}
+
+void WyattRackProcessor::bakeMacros()
+{
+    auto t = currentTreatment();
+    if (! t.hasMacros()) return;
+    auto b = t.baked();
+    b.macros = t.macros;                       // mantém os nomes e alvos...
+    for (auto& m : b.macros) m.value = 0.5f;   // ...com os knobs de volta ao meio
+    applyTreatment (b);
+}
+
+void WyattRackProcessor::applyTreatmentRemapped (Treatment t, const std::vector<int>& newIndexOf)
+{
+    t.remapMacros (newIndexOf);
+    applyTreatment (t);
 }
 
 void WyattRackProcessor::setParamReal (juce::RangedAudioParameter* p, float normalized)
@@ -203,9 +282,15 @@ void WyattRackProcessor::pushUndo()
     redoStack.clear();
 }
 
-void WyattRackProcessor::applyTreatment (const Treatment& t, bool undoable)
+void WyattRackProcessor::applyTreatment (const Treatment& tIn, bool undoable)
 {
     if (undoable) pushUndo();
+    Treatment t = tIn;
+    if ((int) t.blocks.size() > kNumSlots) t.blocks.resize ((size_t) kNumSlots);
+    t.sanitizeMacros();
+    // Zera as macros antes de mexer nos blocos: nenhum bloco novo herda deslocamento de macro antiga.
+    macroDefs = {};
+    syncMacroBus();
     const char* key[] = { "p1", "p2", "p3", "p4", "p5", "p6" };
     for (int s = 0; s < kNumSlots; ++s)
     {
@@ -224,6 +309,11 @@ void WyattRackProcessor::applyTreatment (const Treatment& t, bool undoable)
         setParamReal (slotParam (s, "on"), b.on ? 1.0f : 0.0f);
         setParamReal (tp, tp->convertTo0to1 ((float) b.type));
     }
+    // aplicado em ordem: bloco i = slot i
+    macroDefs = t.macros;
+    for (int m = 0; m < kNumMacros; ++m)
+        if (auto* mp = apvts.getParameter (macroId (m))) setParamReal (mp, macroDefs[(size_t) m].used() ? t.macros[(size_t) m].value : 0.5f);
+    syncMacroBus();
     sendChangeMessage();
 }
 
@@ -235,24 +325,42 @@ void WyattRackProcessor::setSlotType (int slot, int type)
     for (int s = 0; s < kNumSlots; ++s) if ((int) apvts.getRawParameterValue (slotId (s, "tipo"))->load() > 0) slotOf.push_back (s);
     int idx = 0; while (idx < (int) slotOf.size() && slotOf[(size_t) idx] < slot) ++idx;
     const bool exists = idx < (int) slotOf.size() && slotOf[(size_t) idx] == slot;
-    if (type <= 0) { if (exists) t.blocks.erase (t.blocks.begin() + idx); }
+    std::vector<int> newIndexOf ((size_t) t.blocks.size());
+    for (int i = 0; i < (int) newIndexOf.size(); ++i) newIndexOf[(size_t) i] = i;
+    if (type <= 0)
+    {
+        if (! exists) return;
+        t.blocks.erase (t.blocks.begin() + idx);
+        for (int i = 0; i < (int) newIndexOf.size(); ++i) newIndexOf[(size_t) i] = i < idx ? i : (i == idx ? -1 : i - 1);
+    }
     else
     {
         auto nb = BlockState::defaults ((BlockType) type);
-        if (exists) t.blocks[(size_t) idx] = nb;
-        else t.blocks.insert (t.blocks.begin() + idx, nb);
+        if (exists) { t.blocks[(size_t) idx] = nb; newIndexOf[(size_t) idx] = -1; }   // bloco trocado: as macros soltam dele
+        else
+        {
+            if ((int) t.blocks.size() >= kNumSlots) return;
+            t.blocks.insert (t.blocks.begin() + idx, nb);
+            for (int i = 0; i < (int) newIndexOf.size(); ++i) newIndexOf[(size_t) i] = i < idx ? i : i + 1;
+        }
     }
-    applyTreatment (t);
+    applyTreatmentRemapped (t, newIndexOf);
 }
 
 void WyattRackProcessor::moveSlot (int from, int to)
 {
     auto t = currentTreatment();
     if (from < 0 || to < 0 || from >= (int) t.blocks.size() || to >= (int) t.blocks.size() || from == to) return;
+    std::vector<int> order ((size_t) t.blocks.size());
+    for (int i = 0; i < (int) order.size(); ++i) order[(size_t) i] = i;
+    order.erase (order.begin() + from);
+    order.insert (order.begin() + to, from);
+    std::vector<int> newIndexOf (order.size());
+    for (int i = 0; i < (int) order.size(); ++i) newIndexOf[(size_t) order[(size_t) i]] = i;
     auto b = t.blocks[(size_t) from];
     t.blocks.erase (t.blocks.begin() + from);
     t.blocks.insert (t.blocks.begin() + to, b);
-    applyTreatment (t);
+    applyTreatmentRemapped (t, newIndexOf);
 }
 
 void WyattRackProcessor::clearSlot (int slot) { setSlotType (slot, 0); }
@@ -287,7 +395,8 @@ void WyattRackProcessor::setCurrentProgram (int i)
     currentProgram = i;
     const std::string prompt = f[(size_t) i].prompt;
     Treatment t;
-    if (! prompt.empty()) t = brain.interpret (prompt, {}).treatment;
+    if (! prompt.empty()) { t = brain.interpret (prompt, {}).treatment; autoMacros (t, prompt); }
+    macroContext = juce::String::fromUTF8 (prompt.c_str());
     applyTreatment (t);
     LogEntry e;
     e.prompt = juce::String::fromUTF8 (f[(size_t) i].name);
@@ -388,7 +497,8 @@ void WyattRackProcessor::ask (const juce::String& promptIn, bool forceOnline)
     const auto prompt = promptIn.trim();
     if (prompt.isEmpty() || thinking.load()) return;
     lastPromptText = prompt;
-    const Treatment before = currentTreatment();
+    // O cérebro trabalha em cima do som que está tocando: o efeito das macros vira valor fixo.
+    const Treatment before = currentTreatment().baked();
     const BrainResult local = brain.interpret (prompt.toStdString(), before);
 
     const bool keyOk = hasApiKey();
@@ -436,7 +546,11 @@ void WyattRackProcessor::finishAnswer (const juce::String& prompt, const BrainRe
         if (cloud->reset) { applyTreatment ({}); e.reply = cloud->explanation.isNotEmpty() ? cloud->explanation : "Zerei o rack."; }
         else
         {
-            applyTreatment (cloud->treatment);
+            Treatment t = cloud->treatment;
+            t.sanitizeMacros();
+            macroContext = prompt;
+            if (! t.hasMacros()) autoMacros (t, prompt.toStdString());
+            applyTreatment (t);
             e.reply = cloud->explanation;
             if (e.reply.isEmpty()) e.reply = "Montei: " + juce::String::fromUTF8 (cloud->treatment.chainText().c_str()) + ".";
         }
@@ -466,6 +580,9 @@ void WyattRackProcessor::finishAnswer (const juce::String& prompt, const BrainRe
         const auto profile = analyzer.snapshot();
         if (adaptToTrack && ! local.refinement)
             adapted = juce::String::fromUTF8 (adaptToProfile (t, profile).c_str());
+        // ajuste ("mais reverb") soma as palavras ao pedido original, para as macros não trocarem de nome à toa
+        macroContext = local.refinement ? (macroContext + " " + prompt).trim() : prompt;
+        autoMacros (t, macroContext.toStdString());
         applyTreatment (t);
         e.reply = prefix + juce::String::fromUTF8 (local.explanation.c_str());
         if (adapted.isNotEmpty()) e.reply += " " + adapted;
@@ -509,7 +626,10 @@ bool WyattRackProcessor::saveToLibrary (const juce::String& nameIn)
 bool WyattRackProcessor::loadFromFile (const juce::File& f)
 {
     Treatment t; juce::String err;
-    if (! treatmentFromVar (juce::JSON::parse (f.loadFileAsString()), t, err)) return false;
+    const auto json = juce::JSON::parse (f.loadFileAsString());
+    if (! treatmentFromVar (json, t, err)) return false;
+    if (! t.hasMacros()) autoMacros (t, (json.getProperty ("pedido", "").toString() + " " + f.getFileNameWithoutExtension()).toStdString());
+    macroContext = json.getProperty ("pedido", "").toString();
     applyTreatment (t);
     LogEntry e; e.prompt = "Abrir: " + f.getFileNameWithoutExtension();
     e.reply = "Carreguei: " + juce::String::fromUTF8 (t.chainText().c_str()) + ".";
@@ -530,6 +650,8 @@ void WyattRackProcessor::getStateInformation (juce::MemoryBlock& dest)
     auto state = apvts.copyState();
     auto extra = state.getOrCreateChildWithName ("WYATT", nullptr);
     extra.setProperty ("ultimoPedido", lastPromptText, nullptr);
+    extra.setProperty ("contextoMacros", macroContext, nullptr);
+    extra.setProperty ("macros", juce::JSON::toString (treatmentToVar (currentTreatment()).getProperty ("macros", juce::var()), true), nullptr);
     extra.removeAllChildren (nullptr);
     for (auto& e : chatLog)
     {
@@ -548,9 +670,12 @@ void WyattRackProcessor::setStateInformation (const void* data, int size)
     auto state = juce::ValueTree::fromXml (*xml);
     auto extra = state.getChildWithName ("WYATT");
     chatLog.clear();
+    juce::var savedMacros; bool hasSavedMacros = false;
     if (extra.isValid())
     {
         lastPromptText = extra.getProperty ("ultimoPedido").toString();
+        macroContext = extra.getProperty ("contextoMacros", lastPromptText).toString();
+        if (extra.hasProperty ("macros")) { savedMacros = juce::JSON::parse (extra.getProperty ("macros").toString()); hasSavedMacros = true; }
         for (auto c : extra)
             chatLog.push_back ({ c.getProperty ("p").toString(), c.getProperty ("r").toString(), (bool) c.getProperty ("online"), (bool) c.getProperty ("ok", true) });
         state.removeChild (extra, nullptr);
@@ -566,6 +691,26 @@ void WyattRackProcessor::setStateInformation (const void* data, int size)
             const float n = prm->convertTo0to1 ((float) (double) child.getProperty ("value"));
             if (std::abs (prm->getValue() - n) > 1e-6f) prm->setValueNotifyingHost (n);
         }
+    }
+    // macros: alvos salvos (posição na cadeia) → slots; sessões antigas ganham macros automáticas
+    {
+        macroDefs = {};
+        syncMacroBus();
+        Treatment t = currentTreatment();
+        if (hasSavedMacros) macrosFromVar (savedMacros, t);
+        else if (! t.empty()) autoMacros (t, macroContext.toStdString());
+        t.sanitizeMacros();
+        const auto occ = occupiedSlots();
+        for (int m = 0; m < kNumMacros; ++m)
+        {
+            auto d = t.macros[(size_t) m];
+            for (auto& tg : d.targets) tg.block = occ[(size_t) tg.block];
+            macroDefs[(size_t) m] = d;
+            // o valor do knob é o do parâmetro salvo; sessão antiga sem o parâmetro fica no meio
+            if (! hasSavedMacros)
+                if (auto* mp = apvts.getParameter (macroId (m))) mp->setValueNotifyingHost (0.5f);
+        }
+        syncMacroBus();
     }
     undoStack.clear(); redoStack.clear();
     sendChangeMessage();

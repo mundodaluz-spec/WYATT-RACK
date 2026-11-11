@@ -12,6 +12,9 @@ juce::var treatmentToVar (const Treatment& t);
 // Aceita "params" como objeto {"limiar": -20} ou lista [{"nome": "limiar", "valor": -20}].
 // Tipos e parâmetros por nome (com ou sem acento), escolhas por índice ou nome. Valores fora da faixa são limitados.
 bool treatmentFromVar (const juce::var& v, Treatment& out, juce::String& error);
+// Lê a lista "macros" ([{"nome": "PESO", "valor": 0.5, "alvos": [{"bloco": 0, "param": "grave", "quanto": 0.25}]}])
+// para dentro de out.macros. Alvos inválidos são descartados. Devolve quantas macros ficaram.
+int macrosFromVar (const juce::var& list, Treatment& out);
 
 struct CloudConfig
 {

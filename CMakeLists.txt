@@ -53,6 +53,7 @@ set (CORE_SOURCES
     Source/Engine/Blocks.cpp
     Source/Engine/Rack.cpp
     Source/Brain/Treatment.cpp
+    Source/Brain/Macros.cpp
     Source/Brain/LocalBrain.cpp
     Source/Brain/Analysis.cpp)
 

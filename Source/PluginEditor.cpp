@@ -518,6 +518,25 @@ WyattRackEditor::WyattRackEditor (WyattRackProcessor& p) : AudioProcessorEditor 
     bypassAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, "bypass", bypassBtn);
     addAndMakeVisible (bypassBtn);
 
+    for (int m = 0; m < kNumMacros; ++m)
+    {
+        auto& k = macroKnobs[m];
+        k.attach (proc.apvts, WyattRackProcessor::macroId (m));
+        k.setInline (true);
+        k.setColour (ui::red);
+        k.setFormatter ([] (double v)
+        {
+            const int d = juce::roundToInt (v) - 50;
+            return d == 0 ? juce::String::fromUTF8 ("● meio") : ((d > 0 ? "+" : juce::String::fromUTF8 ("−")) + juce::String (std::abs (d)));
+        });
+        k.slider.setDoubleClickReturnValue (true, 50.0);
+        addAndMakeVisible (k);
+    }
+    bakeBtn.setTooltip (u8 ("Fixa no rack o que as macros estão fazendo e volta os knobs para o meio (o som não muda)"));
+    bakeBtn.setColour (juce::TextButton::buttonColourId, ui::metalHi);
+    bakeBtn.onClick = [this] { proc.bakeMacros(); };
+    addAndMakeVisible (bakeBtn);
+
     proc.addChangeListener (this);
     refreshAll();
     setResizable (true, true);
@@ -556,9 +575,27 @@ void WyattRackEditor::closeSettings()
 
 void WyattRackEditor::changeListenerCallback (juce::ChangeBroadcaster*) { refreshAll(); }
 
+void WyattRackEditor::refreshMacros()
+{
+    bool any = false, moved = false;
+    for (int m = 0; m < kNumMacros; ++m)
+    {
+        auto& k = macroKnobs[m];
+        const bool used = proc.macroUsed (m);
+        any |= used;
+        if (used && std::abs (k.slider.getValue() - 50.0) > 0.05) moved = true;
+        k.setLabel (used ? proc.macroName (m) : "MACRO " + juce::String (m + 1));
+        k.setEnabled (used);
+        k.setAlpha (used ? 1.0f : 0.35f);
+        k.slider.setTooltip (used ? proc.macroTip (m) : u8 ("Macro livre: peça um som e o rack dá nome e função a ela"));
+    }
+    bakeBtn.setEnabled (any && moved);
+}
+
 void WyattRackEditor::refreshAll()
 {
     for (auto& s : slots) s->refresh();
+    refreshMacros();
     for (int i = 0; i < 3; ++i) modeBtns[i].setToggleState ((int) proc.aiMode() == i, juce::dontSendNotification);
     undoBtn.setEnabled (proc.canUndo());
     redoBtn.setEnabled (proc.canRedo());
@@ -584,6 +621,11 @@ void WyattRackEditor::timerCallback()
     if (proc.isThinking()) { ++thinkingPhase; repaint (replyArea); }
     undoBtn.setEnabled (proc.canUndo());
     redoBtn.setEnabled (proc.canRedo());
+    {   // FIXAR só acende com alguma macro fora do meio
+        bool moved = false;
+        for (int m = 0; m < kNumMacros; ++m) if (proc.macroUsed (m) && std::abs (macroKnobs[m].slider.getValue() - 50.0) > 0.05) moved = true;
+        if (bakeBtn.isEnabled() != moved) bakeBtn.setEnabled (moved);
+    }
 }
 
 void WyattRackEditor::paint (juce::Graphics& g)
@@ -615,6 +657,16 @@ void WyattRackEditor::paint (juce::Graphics& g)
     auto disp = promptBox.getBounds().toFloat().expanded (4);
     g.setColour (ui::vfdBg); g.fillRoundedRectangle (disp, 5);
     g.setColour (ui::amber.withAlpha (0.18f)); g.drawRoundedRectangle (disp, 5, 1);
+
+    // macros
+    if (! macroArea.isEmpty())
+    {
+        auto ma = macroArea.toFloat();
+        g.setColour (juce::Colour (0xff0d0e10)); g.fillRoundedRectangle (ma, 6);
+        g.setColour (ui::line); g.drawRoundedRectangle (ma.reduced (0.5f), 6, 1);
+        g.setFont (ui::font (9.5f, true)); g.setColour (ui::red.withAlpha (0.9f));
+        g.drawText ("MACROS", macroArea.reduced (10, 4).removeFromTop (12), juce::Justification::left);
+    }
 
     // resposta
     auto r = replyArea.reduced (20, 2);
@@ -712,7 +764,17 @@ void WyattRackEditor::resized()
         }
     }
     footerArea = r.removeFromBottom (72);
-    replyArea = r.removeFromTop (70).withTrimmedTop (8);
+    replyArea = r.removeFromTop (76).withTrimmedTop (8);
+    {   // macros à direita da resposta
+        const int mw = juce::jlimit (420, 600, (int) (getWidth() * 0.46f));
+        macroArea = replyArea.removeFromRight (mw + 20).withTrimmedRight (20).withTrimmedBottom (2);
+        auto m = macroArea.reduced (8, 4);
+        m.removeFromTop (12);
+        bakeBtn.setBounds (m.removeFromRight (58).withSizeKeepingCentre (58, 24));
+        m.removeFromRight (6);
+        const int kw = m.getWidth() / kNumMacros;
+        for (int i = 0; i < kNumMacros; ++i) macroKnobs[i].setBounds (m.removeFromLeft (kw));
+    }
     rackArea = r.reduced (20, 6);
     {
         auto inner = rackArea.reduced (32, 6);

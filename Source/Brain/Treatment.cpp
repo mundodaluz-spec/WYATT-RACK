@@ -28,6 +28,62 @@ static std::string blockSummary (const BlockState& b)
     return lower (s);
 }
 
+void Treatment::sanitizeMacros()
+{
+    for (auto& m : macros)
+    {
+        std::vector<MacroTarget> ok;
+        for (auto t : m.targets)
+        {
+            if (t.block < 0 || t.block >= (int) blocks.size()) continue;
+            if (! macroCanTarget (blocks[(size_t) t.block].type, t.param)) continue;
+            t.depth = std::clamp (t.depth, -1.0f, 1.0f);
+            if (std::abs (t.depth) < 1e-4f) continue;
+            bool dup = false;
+            for (auto& o : ok) if (o.block == t.block && o.param == t.param) dup = true;
+            if (! dup && ok.size() < 12) ok.push_back (t);
+        }
+        m.targets = ok;
+        m.value = std::clamp (m.value, 0.0f, 1.0f);
+        if (! m.used()) { m.name.clear(); m.value = 0.5f; }
+    }
+}
+
+Treatment Treatment::baked() const
+{
+    Treatment t = *this;
+    for (auto& m : macros)
+        for (auto& tg : m.targets)
+        {
+            if (tg.block < 0 || tg.block >= (int) t.blocks.size()) continue;
+            auto& b = t.blocks[(size_t) tg.block];
+            const float off = macroOffset (m.value, tg.depth);
+            if (tg.param == kMacroMix) { b.mix = std::clamp (b.mix + off * 100.0f, 0.0f, 100.0f); continue; }
+            if (! macroCanTarget (b.type, tg.param)) continue;
+            const auto& ps = info (b.type).params[(size_t) tg.param];
+            b.p[(size_t) tg.param] = ps.toReal (std::clamp (ps.toNorm (b.p[(size_t) tg.param]) + off, 0.0f, 1.0f));
+        }
+    t.macros = {};
+    return t;
+}
+
+void Treatment::remapMacros (const std::vector<int>& newIndexOf)
+{
+    for (auto& m : macros)
+    {
+        std::vector<MacroTarget> ok;
+        for (auto t : m.targets)
+        {
+            if (t.block < 0 || t.block >= (int) newIndexOf.size()) continue;
+            const int ni = newIndexOf[(size_t) t.block];
+            if (ni < 0) continue;
+            t.block = ni; ok.push_back (t);
+        }
+        m.targets = ok;
+    }
+    sanitizeMacros();
+}
+
 std::string Treatment::chainText() const
 {
     if (blocks.empty()) return "rack vazio";

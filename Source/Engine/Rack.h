@@ -16,6 +16,28 @@ struct SlotParams
     std::atomic<float>* p[kNumParams] {};
 };
 
+// Macros no caminho do áudio: valor de cada knob (0..100, ponteiro do parâmetro) e quanto ele move
+// cada parâmetro de cada slot (índice kNumParams = mix). Tudo atômico: a tela escreve, o áudio lê.
+constexpr int kMaxMacros = 4;
+struct MacroBus
+{
+    std::atomic<float>* value[kMaxMacros] {};
+    std::atomic<float> depth[kMaxMacros][kNumSlots][kNumParams + 1] {};
+    // Deslocamento normalizado do parâmetro k (kNumParams = mix) no slot s.
+    float offset (int s, int k) const
+    {
+        float o = 0;
+        for (int m = 0; m < kMaxMacros; ++m)
+        {
+            const float d = depth[m][s][k].load (std::memory_order_relaxed);
+            if (d == 0.0f || value[m] == nullptr) continue;
+            o += (value[m]->load (std::memory_order_relaxed) / 100.0f - 0.5f) * 2.0f * d;
+        }
+        return o;
+    }
+    void clear() { for (auto& a : depth) for (auto& b : a) for (auto& c : b) c.store (0.0f); }
+};
+
 class Slot
 {
 public:
@@ -24,6 +46,8 @@ public:
     void process (float* L, float* R, int n, const Ctx& ctx);
 
     SlotParams params;
+    const MacroBus* macros = nullptr;      // opcional
+    int index = 0;                         // posição no rack (para as macros)
     std::atomic<float> activity { 0.0f };  // nível de saída, para a tela
 
     // Leitura direta, para os testes.
@@ -51,7 +75,9 @@ public:
     // Processa no lugar (2 canais). Neutro = áudio idêntico.
     void process (float* L, float* R, int n, const Ctx& ctx);
 
+    Rack() { for (int i = 0; i < kNumSlots; ++i) { slots[(size_t) i].macros = &macros; slots[(size_t) i].index = i; } }
     std::array<Slot, kNumSlots> slots;
+    MacroBus macros;
     std::atomic<float>* inGainDb = nullptr;
     std::atomic<float>* outGainDb = nullptr;
     std::atomic<float>* bypass = nullptr;

@@ -102,6 +102,8 @@ public:
     void closeSettings();
     bool settingsOpen() const { return settings != nullptr; }
     SlotStrip& slot (int i) { return *slots[(size_t) i]; }
+    Knob macroKnobs[kNumMacros];
+    juce::TextButton bakeBtn { "FIXAR" };
 
 private:
     void timerCallback() override;
@@ -118,7 +120,9 @@ private:
     juce::TextButton bypassBtn { "BYPASS" };
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAtt;
     std::unique_ptr<juce::Component> settings;
-    juce::Rectangle<int> headerArea, consoleArea, replyArea, rackArea, footerArea;
+    void refreshMacros();
+    juce::Rectangle<int> headerArea, consoleArea, replyArea, macroArea, rackArea, footerArea;
+    juce::TooltipWindow tooltips { this, 500 };
     float inMeter = 0, outMeter = 0;
     int thinkingPhase = 0;
     std::unique_ptr<juce::FileChooser> chooser;

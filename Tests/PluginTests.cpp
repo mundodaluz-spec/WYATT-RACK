@@ -344,6 +344,162 @@ static void testHybrid()
     p.setAiMode (AiMode::Hibrido);
 }
 
+static float macroNorm (WyattRackProcessor& p, int m) { return p.apvts.getParameter (WyattRackProcessor::macroId (m))->getValue(); }
+static void setMacro (WyattRackProcessor& p, int m, float n) { p.apvts.getParameter (WyattRackProcessor::macroId (m))->setValueNotifyingHost (n); }
+
+static void testMacros()
+{
+    std::printf ("== Macros\n");
+    WyattRackProcessor p; p.setAiMode (AiMode::Offline);
+    p.prepareToPlay (48000, 512);
+    for (int m = 0; m < kNumMacros; ++m) CHECK (! p.macroUsed (m), "rack vazio sem macros\n");
+
+    p.ask (juce::String::fromUTF8 ("voz quente, na cara, com reverb de igreja"));
+    int used = 0; for (int m = 0; m < kNumMacros; ++m) if (p.macroUsed (m)) ++used;
+    CHECK (used >= 3, "pedido offline criou %d macros\n", used);
+    CHECK (std::abs (macroNorm (p, 0) - 0.5f) < 1e-4f, "macro nasce no meio\n");
+    CHECK (p.macroTip (0).contains ("move:"), "dica da macro (%s)\n", p.macroTip (0).toRawUTF8());
+    {
+        auto* prm = p.apvts.getParameter ("macro1");
+        CHECK (prm->getCurrentValueAsText().startsWith (p.macroName (0)), "DAW mostra o nome da macro (%s)\n", prm->getCurrentValueAsText().toRawUTF8());
+    }
+
+    // girar e fixar
+    const auto base = p.currentTreatment();
+    setMacro (p, 0, 1.0f); setMacro (p, 1, 0.2f);
+    const auto turned = p.currentTreatment();
+    CHECK (! (turned == base) && turned.blocks.size() == base.blocks.size(), "girar a macro muda o tratamento salvo (valor da macro)\n");
+    const auto expectBaked = turned.baked();
+    p.bakeMacros();
+    auto after = p.currentTreatment();
+    Treatment blocksOnly = after; blocksOnly.macros = {};
+    CHECK (blocksOnly == expectBaked, "FIXAR grava nos blocos o que as macros faziam\n");
+    CHECK (std::abs (macroNorm (p, 0) - 0.5f) < 1e-4f && std::abs (macroNorm (p, 1) - 0.5f) < 1e-4f && p.macroUsed (0), "FIXAR volta os knobs ao meio e mantém as macros\n");
+    p.undo();
+    CHECK (std::abs (macroNorm (p, 0) - 1.0f) < 1e-4f && p.currentTreatment() == turned, "DESFAZER do FIXAR volta a macro girada\n");
+
+    // ajuste com macro girada: o cérebro parte do som que está tocando
+    {
+        const auto playing = p.currentTreatment().baked();
+        const auto* rv0 = playing.find (BlockType::Reverb);
+        p.ask ("mais reverb");
+        const auto* rv1 = p.currentTreatment().find (BlockType::Reverb);
+        CHECK (rv0 && rv1 && rv1->mix > rv0->mix, "\"mais reverb\" parte do som com a macro (%.1f → %.1f)\n", rv0 ? rv0->mix : -1.f, rv1 ? rv1->mix : -1.f);
+        CHECK (std::abs (macroNorm (p, 0) - 0.5f) < 1e-4f, "depois do ajuste as macros recomeçam no meio\n");
+        bool keptCalor = false; for (int m = 0; m < kNumMacros; ++m) if (p.macroName (m) == "CALOR") keptCalor = true;
+        CHECK (keptCalor, "ajuste não troca as macros do pedido original\n");
+    }
+
+    // estado salvo e reaberto
+    setMacro (p, 1, 0.8f);
+    {
+        juce::MemoryBlock mb; p.getStateInformation (mb);
+        WyattRackProcessor q; q.prepareToPlay (48000, 512);
+        q.setStateInformation (mb.getData(), (int) mb.getSize());
+        CHECK (q.currentTreatment() == p.currentTreatment(), "macros (nomes, alvos e valores) voltam com o projeto\n");
+        CHECK (q.macroName (1) == p.macroName (1), "nome da macro 2 salvo\n");
+        juce::AudioBuffer<float> a, b;
+        processSeconds (p, 0.5, 0.25f, &a); processSeconds (q, 0.5, 0.25f, &b);
+        float d = 0; for (int i = 0; i < a.getNumSamples(); ++i) d = std::max (d, std::abs (a.getSample (0, i) - b.getSample (0, i)));
+        CHECK (d < 1e-4f, "projeto reaberto soa igual (dif. %.6f)\n", d);
+
+        // sessão antiga (sem macros salvas) ganha macros automáticas
+        auto xml = juce::AudioProcessor::getXmlFromBinary (mb.getData(), (int) mb.getSize());
+        if (auto* w = xml->getChildByName ("WYATT")) { w->removeAttribute ("macros"); }
+        for (auto* c : xml->getChildIterator()) if (c->getStringAttribute ("id").startsWith ("macro")) c->setAttribute ("value", 50.0);
+        juce::MemoryBlock old; juce::AudioProcessor::copyXmlToBinary (*xml, old);
+        WyattRackProcessor r; r.prepareToPlay (48000, 512);
+        r.setStateInformation (old.getData(), (int) old.getSize());
+        CHECK (r.macroUsed (0) && r.currentTreatment().blocks.size() == p.currentTreatment().blocks.size(), "projeto da versão 1.0 ganha macros\n");
+    }
+
+    // mover e trocar bloco
+    {
+        auto t = p.currentTreatment();
+        int m0 = -1; for (int m = 0; m < kNumMacros; ++m) if (p.macroUsed (m)) { m0 = m; break; }
+        const int blk = t.macros[(size_t) m0].targets[0].block;
+        const int typ = t.blocks[(size_t) blk].type;
+        p.moveSlot (blk, blk == 0 ? 1 : 0);
+        auto t2 = p.currentTreatment();
+        bool follows = false;
+        for (auto& tg : t2.macros[(size_t) m0].targets) if (t2.blocks[(size_t) tg.block].type == typ) follows = true;
+        CHECK (follows, "macro continua no mesmo bloco depois de mover\n");
+        const int nb = (blk == 0 ? 1 : 0);
+        p.setSlotType (nb, (int) BlockType::Tremolo);
+        auto t3 = p.currentTreatment();
+        bool none = true; for (auto& mm : t3.macros) for (auto& tg : mm.targets) if (tg.block == nb) none = false;
+        CHECK (none, "bloco trocado solta das macros\n");
+    }
+
+    // biblioteca
+    {
+        p.ask (juce::String::fromUTF8 ("violão aberto e espacial"));
+        setMacro (p, 0, 0.7f);
+        const auto ref = p.currentTreatment();
+        CHECK (p.saveToLibrary ("__teste macros__"), "salvar na biblioteca\n");
+        auto f = WyattRackProcessor::libraryFolder().getChildFile ("__teste macros__.wyrack");
+        CHECK (f.loadFileAsString().contains ("\"macros\""), "arquivo .wyrack tem as macros\n");
+        p.ask ("telefone");
+        CHECK (p.loadFromFile (f) && p.currentTreatment() == ref, "abrir da biblioteca volta as macros e a posição delas\n");
+        f.deleteFile();
+        // .wyrack antigo, sem macros
+        juce::var v = treatmentToVar (ref.baked());
+        CHECK (! juce::JSON::toString (v).contains ("macros"), "tratamento sem macros não grava a lista\n");
+        auto old = WyattRackProcessor::libraryFolder().getChildFile ("__antigo__.wyrack");
+        old.replaceWithText (juce::JSON::toString (v));
+        CHECK (p.loadFromFile (old) && p.macroUsed (0), ".wyrack antigo ganha macros ao abrir\n");
+        old.deleteFile();
+    }
+
+    // preset de fábrica
+    p.setCurrentProgram (12);   // Baixo Gordo
+    bool peso = false; for (int m = 0; m < kNumMacros; ++m) if (p.macroName (m) == "PESO") peso = true;
+    CHECK (peso, "preset Baixo Gordo tem PESO\n");
+
+    // zerar
+    p.ask ("zera tudo");
+    bool any = false; for (int m = 0; m < kNumMacros; ++m) any |= p.macroUsed (m);
+    CHECK (! any, "zerar o rack apaga as macros\n");
+}
+
+static void testMacrosCloud()
+{
+    std::printf ("== Macros da IA avançada (servidor falso)\n");
+    FakeApi api;
+    WyattRackProcessor p;
+    p.prepareToPlay (48000, 512);
+    p.useCloudOverride = true;
+    p.cloudOverride.apiKey = "sk-ant-teste";
+    p.cloudOverride.endpoint = "http://127.0.0.1:" + juce::String (api.port) + "/v1/messages";
+    p.cloudOverride.timeoutMs = 4000;
+    p.setAiMode (AiMode::Online);
+    api.reply ("200 OK", apiMessage (juce::String::fromUTF8 (R"({"explicacao":"Bateria funk com mojo vintage.","zerar":false,"blocos":[
+        {"tipo":"eq","ligado":true,"mix":100,"params":[{"nome":"grave","valor":3}]},
+        {"tipo":"compressor","ligado":true,"mix":100,"params":[{"nome":"limiar","valor":-24}]},
+        {"tipo":"saturacao","ligado":true,"mix":100,"params":[{"nome":"drive","valor":12}]}],
+        "macros":[
+          {"nome":"mojo","alvos":[{"bloco":2,"param":"drive","quanto":0.3},{"bloco":2,"param":"tipo","quanto":0.5}]},
+          {"nome":"THUMP","alvos":[{"bloco":0,"param":"grave","quanto":0.25},{"bloco":1,"param":"ataque","quanto":0.2}]},
+          {"nome":"BITE","alvos":[{"bloco":1,"param":"limiar","quanto":-0.2},{"bloco":9,"param":"mix","quanto":0.2}]},
+          {"nome":"FANTASMA","alvos":[{"bloco":5,"param":"mix","quanto":0.3}]}]})")));
+    p.ask (juce::String::fromUTF8 ("dá um mojo vintage funk nessa bateria"));
+    p.waitForAssistant (6000);
+    CHECK (p.log().back().online, "resposta online\n");
+    CHECK (p.macroName (0) == "MOJO" && p.macroName (1) == "THUMP" && p.macroName (2) == "BITE", "nomes da IA (%s, %s, %s)\n", p.macroName (0).toRawUTF8(), p.macroName (1).toRawUTF8(), p.macroName (2).toRawUTF8());
+    auto t = p.currentTreatment();
+    CHECK (t.macros[0].targets.size() == 1 && t.macros[2].targets.size() == 1, "alvos inválidos da IA descartados (escolha, bloco 9)\n");
+    CHECK (! p.macroUsed (3), "macro sem nenhum alvo válido some\n");
+    const auto req = api.request();
+    CHECK (req.contains ("\"macros\"") && req.contains ("alvos"), "pedido ensina a IA a criar macros\n");
+
+    // IA sem macros → automáticas
+    api.reply ("200 OK", apiMessage (R"({"explicacao":"Só um reverb.","zerar":false,"blocos":[{"tipo":"reverb","ligado":true,"mix":30,"params":[]}],"macros":[]})"));
+    p.ask (juce::String::fromUTF8 ("reverb de catedral bem distante"));
+    p.waitForAssistant (6000);
+    bool esp = false; for (int m = 0; m < kNumMacros; ++m) if (p.macroName (m) == juce::String::fromUTF8 ("ESPAÇO")) esp = true;
+    CHECK (p.log().back().online && esp, "IA sem macros → macros automáticas com ESPAÇO\n");
+}
+
 static void testEditor()
 {
     std::printf ("== Tela\n");
@@ -367,6 +523,15 @@ static void testEditor()
     processSeconds (p, 1.0);
     juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
     snap (*ed, "03-adlibs");
+
+    CHECK (ed->macroKnobs[0].isEnabled() && ! ed->bakeBtn.isEnabled(), "knobs de macro ativos, FIXAR apagado no meio\n");
+    ed->macroKnobs[0].slider.setValue (80.0);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+    CHECK (std::abs (p.currentTreatment().macros[0].value - 0.8f) < 1e-3f && ed->bakeBtn.isEnabled(), "girar a macro na tela\n");
+    snap (*ed, "03b-macro-girada");
+    ed->bakeBtn.triggerClick();
+    juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+    CHECK (std::abs (ed->macroKnobs[0].slider.getValue() - 50.0) < 0.01, "FIXAR pela tela\n");
 
     p.setCurrentProgram (11); // Bateria Suja
     juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
@@ -408,6 +573,8 @@ int main (int argc, char** argv)
     testAnalysis();
     testCloudParsing();
     testHybrid();
+    testMacros();
+    testMacrosCloud();
     testEditor();
     std::printf ("\n%d verificações OK, %d falharam\n", passed, failed);
     return failed == 0 ? 0 : 1;
