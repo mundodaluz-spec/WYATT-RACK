@@ -1,5 +1,5 @@
 cmake_minimum_required (VERSION 3.22)
-project (WYATT_RACK VERSION 1.0.0 LANGUAGES C CXX)
+project (WMUSIC_RACK VERSION 2.0.0 LANGUAGES C CXX)
 
 set (CMAKE_CXX_STANDARD 17)
 set (CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -28,7 +28,7 @@ if (APPLE)
 endif()
 
 juce_add_plugin (WyattRack
-    PRODUCT_NAME "WYATT RACK"
+    PRODUCT_NAME "WMusic Rack"
     COMPANY_NAME "WYATT Sounds"
     BUNDLE_ID "com.wyattsounds.wyattrack"
     PLUGIN_MANUFACTURER_CODE Wytt
@@ -41,12 +41,18 @@ juce_add_plugin (WyattRack
     COPY_PLUGIN_AFTER_BUILD FALSE
     VST3_CATEGORIES Fx
     AU_MAIN_TYPE kAudioUnitType_Effect
-    DESCRIPTION "Descreva o som em portugues e o rack monta a cadeia de efeitos")
+    DESCRIPTION "AI effects rack: describe the sound and the rack builds the chain")
 
 juce_add_binary_data (WyattRackData SOURCES
-    Resources/Inter-Regular.ttf
-    Resources/Inter-Bold.ttf
-    Resources/Inter-Black.ttf)
+    Resources/fonts/BarlowCondensed-Medium.ttf
+    Resources/fonts/BarlowCondensed-SemiBold.ttf
+    Resources/fonts/BarlowCondensed-Bold.ttf
+    Resources/skin/metal.jpg
+    Resources/skin/knob.png
+    Resources/skin/btn_red.png
+    Resources/skin/btn_cream.png
+    Resources/skin/btn_dark.png
+    Resources/skin/logo.png)
 
 set (CORE_SOURCES
     Source/Engine/Catalog.cpp
@@ -60,7 +66,10 @@ target_sources (WyattRack PRIVATE
     ${CORE_SOURCES}
     Source/Brain/CloudBrain.cpp
     Source/PluginProcessor.cpp
-    Source/PluginEditor.cpp)
+    Source/PluginEditor.cpp
+    Source/UI/Labels.cpp
+    Source/UI/Theme.cpp
+    Source/UI/Visualizers.cpp)
 
 target_compile_definitions (WyattRack PUBLIC
     JUCE_WEB_BROWSER=0

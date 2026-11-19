@@ -1,4 +1,4 @@
-name: WYATT RACK — compilar e testar
+name: WMusic Rack — compilar e testar
 
 on:
   push:
@@ -56,21 +56,21 @@ jobs:
       - name: pluginval (nível 7)
         shell: bash
         run: |
-          VST3=$(find build -type d -name "WYATT RACK.vst3" | head -1)
+          VST3=$(find build -type d -name "WMusic Rack.vst3" | head -1)
           if [ "$RUNNER_OS" == "Windows" ]; then
             curl -sSL -o pv.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip
             unzip -q pv.zip; ./pluginval.exe --strictness-level 7 --validate-in-process "$VST3"
           elif [ "$RUNNER_OS" == "macOS" ]; then
             curl -sSL -o pv.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip
             unzip -q pv.zip; ./pluginval.app/Contents/MacOS/pluginval --strictness-level 7 --validate-in-process "$VST3"
-            AU=$(find build -type d -name "WYATT RACK.component" | head -1)
+            AU=$(find build -type d -name "WMusic Rack.component" | head -1)
             mkdir -p ~/Library/Audio/Plug-Ins/Components && cp -R "$AU" ~/Library/Audio/Plug-Ins/Components/
-            codesign --force --deep -s - ~/Library/Audio/Plug-Ins/Components/"WYATT RACK.component"
+            codesign --force --deep -s - ~/Library/Audio/Plug-Ins/Components/"WMusic Rack.component"
             killall -9 AudioComponentRegistrar || true
             sleep 3
             auval -a | grep -i wyatt || true
             auval -v aufx WyRk Wytt
-            ./pluginval.app/Contents/MacOS/pluginval --strictness-level 7 --validate-in-process ~/Library/Audio/Plug-Ins/Components/"WYATT RACK.component"
+            ./pluginval.app/Contents/MacOS/pluginval --strictness-level 7 --validate-in-process ~/Library/Audio/Plug-Ins/Components/"WMusic Rack.component"
           else
             curl -sSL -o pv.zip https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Linux.zip
             unzip -q pv.zip; xvfb-run -a ./pluginval --strictness-level 7 --validate-in-process "$VST3"
@@ -81,14 +81,14 @@ jobs:
         run: |
           mkdir -p dist
           ART="build/WyattRack_artefacts/Release"; ls -la "$ART"
-          cp -R "$ART/VST3/WYATT RACK.vst3" dist/
-          if [ -d "$ART/AU" ]; then cp -R "$ART/AU/WYATT RACK.component" dist/; fi
+          cp -R "$ART/VST3/WMusic Rack.vst3" dist/
+          if [ -d "$ART/AU" ]; then cp -R "$ART/AU/WMusic Rack.component" dist/; fi
           if [ -d "$ART/Standalone" ]; then cp -R "$ART/Standalone/"* dist/; fi
           cp LEIA-ME.txt dist/ || true
 
       - uses: actions/upload-artifact@v4
         with:
-          name: WYATT-RACK-${{ matrix.name }}
+          name: WMusic-Rack-${{ matrix.name }}
           path: dist
 
       - uses: actions/upload-artifact@v4

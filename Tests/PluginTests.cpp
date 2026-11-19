@@ -1,6 +1,7 @@
 // WYATT RACK — testes de integração do plugin (processador, estado, IA híbrida com servidor falso, tela)
 #include "../Source/PluginProcessor.h"
 #include "../Source/PluginEditor.h"
+#include "../Source/UI/Labels.h"
 #include <cstdio>
 
 using namespace wr;
@@ -344,57 +345,111 @@ static void testHybrid()
     p.setAiMode (AiMode::Hibrido);
 }
 
+static juce::MouseEvent mouseAt (juce::Component& c, juce::Point<float> pos, bool drag = false)
+{
+    auto src = juce::Desktop::getInstance().getMainMouseSource();
+    const auto now = juce::Time::getCurrentTime();
+    return juce::MouseEvent (src, pos, juce::ModifierKeys::leftButtonModifier, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f, &c, &c, now, pos, now, 1, drag);
+}
+
+static void pump (int ms) { juce::MessageManager::getInstance()->runDispatchLoopUntil (ms); }
+
 static void testEditor()
 {
     std::printf ("== Tela\n");
     WyattRackProcessor p; p.setAiMode (AiMode::Hibrido);
     p.prepareToPlay (48000, 512);
     std::unique_ptr<WyattRackEditor> ed (dynamic_cast<WyattRackEditor*> (p.createEditor()));
-    CHECK (ed != nullptr && ed->getWidth() == 1100, "editor criado\n");
+    CHECK (ed != nullptr && ed->getWidth() == 1152 && ed->getHeight() == 738, "editor criado (%d x %d)\n", ed->getWidth(), ed->getHeight());
     ed->setVisible (true);
-    snap (*ed, "01-vazio");
+    ed->setSize (1280, 820);
+    CHECK (ed->page() == WyattRackEditor::Page::Start, "rack vazio abre na conversa com a IA\n");
+    snap (*ed, "00a-inicio");
 
-    ed->promptBox.setText (juce::String::fromUTF8 ("voz quente, na cara, com reverb de igreja"), false);
-    ed->createBtn.triggerClick();
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
-    CHECK (p.currentTreatment().blocks.size() >= 4, "CRIAR pela tela montou o rack\n");
-    processSeconds (p, 1.0);
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
-    snap (*ed, "02-voz-igreja");
+    // pedido pela tela inicial: monta e vai para o rack
+    ed->bigPrompt.setText (juce::String::fromUTF8 ("voz quente, na cara, com reverb de igreja"), false);
+    ed->bigCreateBtn.triggerClick();
+    pump (300);
+    CHECK (p.currentTreatment().blocks.size() >= 4, "CREATE da tela inicial montou o rack\n");
+    CHECK (ed->page() == WyattRackEditor::Page::Rack, "depois do pedido foi para o rack\n");
+    processSeconds (p, 1.0); pump (300);
+    snap (*ed, "00-rack");
 
     ed->promptBox.setText ("adlib com eco", false);
     ed->submitPrompt();
-    processSeconds (p, 1.0);
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
-    snap (*ed, "03-adlibs");
+    processSeconds (p, 1.0); pump (300);
+    snap (*ed, "00b-adlibs");
 
-    p.setCurrentProgram (11); // Bateria Suja
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (200);
-    processSeconds (p, 1.0);
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (300);
-    snap (*ed, "04-bateria");
+    ed->undoBtn.triggerClick(); pump (100);
+    CHECK (p.currentTreatment().find (BlockType::Reverb) != nullptr, "UNDO pela tela\n");
 
-    ed->undoBtn.triggerClick();
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
-    CHECK (p.currentTreatment().find (BlockType::Delay) != nullptr, "DESFAZER pela tela\n");
-
-    ed->modeBtns[0].triggerClick();
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+    ed->modeBtns[0].triggerClick(); pump (100);
     CHECK (p.aiMode() == AiMode::Offline, "botão OFFLINE\n");
-    ed->modeBtns[1].triggerClick();
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
-    CHECK (p.aiMode() == AiMode::Hibrido, "botão HÍBRIDO\n");
+    ed->modeBtns[1].triggerClick(); pump (100);
+    CHECK (p.aiMode() == AiMode::Hibrido, "botão HYBRID\n");
 
-    ed->openSettings();
-    juce::MessageManager::getInstance()->runDispatchLoopUntil (100);
+    // OPEN pela linha do rack
+    ed->slot (0).openBtn.triggerClick(); pump (100);
+    CHECK (ed->page() == WyattRackEditor::Page::Module && ed->module().slot() == 0, "OPEN abre o painel do slot 1\n");
+
+    // um painel para cada tipo de bloco
+    int panels = 0;
+    for (int t = 1; t < kNumTypes; ++t)
+    {
+        Treatment tr;
+        tr.blocks.push_back (BlockState::defaults (BlockType::EQ));
+        tr.blocks.push_back (BlockState::defaults ((BlockType) t));
+        if (t == (int) BlockType::Gate) tr.blocks[1].p[0] = -30;
+        p.applyTreatment (tr);
+        ed->openModule (1);
+        for (int k = 0; k < 12; ++k) { processSeconds (p, 0.1); ed->module().timerCallback(); }
+        pump (60);
+        const bool ok = ed->page() == WyattRackEditor::Page::Module && ed->module().slot() == 1 && ed->module().viz.state.type == t
+                        && ! ed->module().viz.state.specDb.empty();
+        if (ok) ++panels; else std::printf ("  painel %d não abriu certo\n", t);
+        juce::String nm = juce::String (t).paddedLeft ('0', 2) + "-" + juce::String (ui::blockName (t)).toLowerCase().replace (" / ", "-").replace (" ", "-");
+        snap (*ed, nm);
+        // interações próprias
+        auto& v = ed->module().viz;
+        if (t == (int) BlockType::Saturacao)
+        {   // clique na carta TAPE
+            v.mouseDown (mouseAt (v, { 24 + 112 + 52, 100 })); pump (50);
+            CHECK ((int) p.currentTreatment().blocks[1].p[1] == 1, "clique na carta TAPE trocou o tipo\n");
+        }
+        if (t == (int) BlockType::EQ)
+        {   // arrasta o ponto MID para cima
+            v.repaint(); snap (*ed, "tmp");
+            const float f = p.currentTreatment().blocks[1].p[2];
+            const float x = 50 + (std::log10 (f) - std::log10 (20.0f)) / 3.0f * ((float) v.getWidth() - 70);
+            const float y0 = 20 + ((float) v.getHeight() - 56) / 2;
+            v.mouseDown (mouseAt (v, { x, y0 }));
+            v.mouseDrag (mouseAt (v, { x, y0 - 60 }, true));
+            v.mouseUp (mouseAt (v, { x, y0 - 60 }, true));
+            const float gain = p.currentTreatment().blocks[1].p[3];
+            CHECK (gain > 5, "arrastar o ponto MID subiu o médio (%.1f dB)\n", gain);
+        }
+        if (t == (int) BlockType::Compressor) CHECK (v.state.live > 0.5f, "compressor mostra redução ao vivo (%.1f dB)\n", v.state.live);
+    }
+    outDir.getChildFile ("tmp.png").deleteFile();
+    CHECK (panels == kNumTypes - 1, "%d de %d painéis abriram\n", panels, kNumTypes - 1);
+
+    // PREV / BACK
+    ed->openModule (1);
+    pump (50);
+    ed->showPage (WyattRackEditor::Page::Rack);
+    CHECK (ed->page() == WyattRackEditor::Page::Rack && ed->module().slot() < 0, "BACK TO RACK fecha o painel\n");
+    CHECK (! p.rack.slots[1].scopeOn.load(), "osciloscópio desligado ao fechar o painel\n");
+
+    ed->openSettings(); pump (100);
     CHECK (ed->settingsOpen(), "configurações abertas\n");
-    snap (*ed, "05-config-ia");
+    snap (*ed, "16-config-ia");
     ed->closeSettings();
 
-    ed->setSize (1500, 1000);
-    snap (*ed, "06-grande");
-    ed->setSize (980, 720);
-    snap (*ed, "07-pequeno");
+    ed->setSize (1600, 1025);
+    CHECK (std::abs (ed->contentScale() - 1.25f) < 0.01f, "escala 125%%\n");
+    snap (*ed, "17-grande");
+    ed->setSize (768, 492);
+    snap (*ed, "18-pequeno");
     ed.reset();
     CHECK (true, "editor fechado sem travar\n");
 }

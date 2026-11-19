@@ -209,6 +209,7 @@ void WyattRackProcessor::pushUndo()
 void WyattRackProcessor::applyTreatment (const Treatment& t, bool undoable)
 {
     if (undoable) pushUndo();
+    presetModified = true;
     const char* key[] = { "p1", "p2", "p3", "p4", "p5", "p6" };
     for (int s = 0; s < kNumSlots; ++s)
     {
@@ -292,6 +293,7 @@ void WyattRackProcessor::setCurrentProgram (int i)
     Treatment t;
     if (! prompt.empty()) t = brain.interpret (prompt, {}).treatment;
     applyTreatment (t);
+    presetModified = false;
     LogEntry e;
     e.prompt = juce::String::fromUTF8 (f[(size_t) i].name);
     e.reply = juce::String::fromUTF8 ("Preset de fábrica \"") + e.prompt + "\": "
@@ -315,8 +317,9 @@ void WyattRackProcessor::migrateFromWyattRack()
     auto settings = openSettings();
     if (settings && ! settings->containsKey ("chaveIA"))
     {
-        juce::PropertiesFile::Options o = settings->getOptions();
-        o.applicationName = "WYATT RACK";
+        juce::PropertiesFile::Options o;
+        o.applicationName = "WYATT RACK"; o.filenameSuffix = ".settings"; o.folderName = "WYATT Sounds";
+        o.osxLibrarySubFolder = "Application Support"; o.storageFormat = juce::PropertiesFile::storeAsXML;
         juce::PropertiesFile old (o);
         for (auto* k : { "chaveIA", "modeloIA", "modoIA" })
             if (old.containsKey (k)) settings->setValue (k, old.getValue (k));
@@ -594,6 +597,7 @@ void WyattRackProcessor::setStateInformation (const void* data, int size)
         }
     }
     undoStack.clear(); redoStack.clear();
+    presetModified = ! currentTreatment().empty();
     sendChangeMessage();
 }
 

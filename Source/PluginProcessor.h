@@ -80,6 +80,7 @@ public:
     void setApiKey (const juce::String& key, const juce::String& model);
     TrackProfile trackProfile() const { return analyzer.snapshot(); }
     bool adaptToTrack = true;
+    bool presetModified = false;   // a cadeia mudou depois do último preset de fábrica
 
     // ---- biblioteca do usuário
     static juce::File libraryFolder();

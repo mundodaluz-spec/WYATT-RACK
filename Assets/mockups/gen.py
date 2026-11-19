@@ -697,3 +697,51 @@ main_screen()
 for i, k in enumerate(ORDER, start=1):
     expanded(k, i)
 print('ok', len(os.listdir(OUT)))
+
+# ------------------------------------------------------------------ tela inicial: conversa com a IA (rack vazio)
+def start_screen():
+    s = left_column(preset='Empty Rack')
+    s += panel(290, 14, 976, 718)
+    s += title(316, 30, 'WHAT SOUND DO YOU WANT?', 30)
+    s += key(1078, 30, 172, 36, 'SIGNAL CHAIN &#9654;', '', 15)
+    s += f'<div class="abs" style="left:318px;top:76px;font-size:15px;color:#a9a49c;letter-spacing:.4px">Describe it the way you would tell your engineer — style, instrument, an artist reference, or a quick fix.</div>'
+    # campo grande (3 linhas)
+    s += f'<div class="display" style="left:312px;top:112px;width:932px;height:132px"></div>'
+    s += f'<div class="abs" style="left:334px;top:128px;width:760px;font-size:27px;line-height:36px;font-weight:600;color:{CREAM}">voz de adoração bem espacial, com delay 1/8 pontuado e um brilho em cima, estilo Isadora Pompeo<span style="color:{RED}">|</span></div>'
+    s += f'<div class="abs small" style="left:334px;top:220px">WRITE IN PORTUGUESE · ENTER TO CREATE</div>'
+    s += key(1100, 186, 130, 46, 'CREATE', 'red', 19)
+    # exemplos
+    s += title(316, 262, 'TRY ONE', 18)
+    ex = [('VOCAL', 'voz gospel com reverb de igreja'), ('VOCAL', 'voz trap estilo Travis Scott'), ('DRUMS', 'bateria suja e larga'),
+          ('BASS', 'baixo gordo'), ('GUITAR', 'violão aberto e espacial'), ('MASTER', 'master gospel com pressão'),
+          ('FX', 'efeito telefone'), ('FX', 'anos 80 sonhador'), ('?', 'me surpreenda')]
+    for i, (tag, t) in enumerate(ex):
+        x = 312 + (i % 3) * 312; y = 300 + (i // 3) * 54
+        s += f'<div class="abs" style="left:{x}px;top:{y}px;width:304px;height:46px;border-radius:7px;background:linear-gradient(180deg,rgba(255,255,255,.05),rgba(0,0,0,.35)),#141416;box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 0 0 1px #000"></div>'
+        s += f'<div class="abs" style="left:{x+12}px;top:{y+15}px;width:58px;height:17px;border-radius:3px;border:1px solid {RED};color:{RED};font-size:11px;font-weight:700;text-align:center;line-height:15px;letter-spacing:1px">{tag}</div>'
+        s += f'<div class="abs" style="left:{x+80}px;top:{y+12}px;font-size:17px;color:{CREAM};font-weight:500">{t}</div>'
+    # conversa
+    s += title(316, 474, 'CONVERSATION', 18)
+    s += f'<div class="display" style="left:312px;top:510px;width:932px;height:206px"></div>'
+    msgs = [
+        ('you', 'voz gospel com reverb de igreja'),
+        ('OFFLINE BRAIN', 'Entendi: gospel · voz · igreja. Montei: EQ → De-Esser → Compressor → Saturação → Reverb (igreja, 3,2 s).'),
+        ('you', 'menos reverb e mais brilho'),
+        ('OFFLINE BRAIN', 'Reverb 22% → 15%; agudos +2,5 dB.'),
+        ('you', 'quero que soe como se eu estivesse cantando sozinho numa caverna'),
+        ('ADVANCED AI', 'Montei um eco de caverna escura: EQ com agudos cortados em 5 kHz, delay 1/4 com 55% de repetições e reverb catedral de 8 s.'),
+    ]
+    y = 522
+    for who, txt in msgs:
+        if who == 'you':
+            w = 24 + len(txt) * 7.6
+            s += f'<div class="abs" style="left:{1230-w}px;top:{y}px;width:{w}px;height:26px;border-radius:13px;background:#2a1213;border:1px solid #5a1a1c;font-size:15px;line-height:24px;text-align:center;color:{CREAM}">{txt}</div>'
+        else:
+            col = '#7cc4ff' if who == 'ADVANCED AI' else RED
+            s += f'<div class="abs" style="left:328px;top:{y+4}px;width:110px;font-size:11px;font-weight:700;letter-spacing:1.3px;color:{col}">{who}</div>'
+            s += f'<div class="abs" style="left:440px;top:{y+1}px;width:790px;font-size:15px;color:#d8d1c4;white-space:nowrap;overflow:hidden">{txt}</div>'
+        y += 32
+    s += bottom_bar()
+    page(s, '00a-start-ai')
+
+start_screen()
