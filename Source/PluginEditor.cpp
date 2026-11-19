@@ -492,6 +492,24 @@ WyattRackEditor::WyattRackEditor (WyattRackProcessor& p) : AudioProcessorEditor 
     bypassAtt = std::make_unique<juce::AudioProcessorValueTreeState::ButtonAttachment> (proc.apvts, "bypass", bypassBtn);
     content.addAndMakeVisible (bypassBtn);
 
+    // ---- macros (cabeçalho do SIGNAL CHAIN)
+    for (int m = 0; m < kNumMacros; ++m)
+    {
+        auto& k = macroKnobs[m];
+        k.layout = Knob::Layout::Inline; k.knobSize = 30; k.nameSize = 12.5f; k.valueSize = 14.5f;
+        k.format = [] (double v)
+        {
+            const int d = juce::roundToInt (v) - 50;
+            return d == 0 ? juce::String ("center") : ((d > 0 ? "+" : juce::String::fromUTF8 ("\xe2\x88\x92")) + juce::String (std::abs (d)));
+        };
+        k.slider.setDoubleClickReturnValue (true, 50.0);
+        macroAtt[m] = std::make_unique<juce::AudioProcessorValueTreeState::SliderAttachment> (proc.apvts, WyattRackProcessor::macroId (m), k.slider);
+        content.addAndMakeVisible (k);
+    }
+    bakeBtn.setTooltip ("Write what the macros are doing into the rack and return them to center (the sound does not change)");
+    bakeBtn.onClick = [this] { proc.bakeMacros(); };
+    content.addAndMakeVisible (bakeBtn);
+
     layout();
     proc.addChangeListener (this);
     currentPage = proc.currentTreatment().empty() ? Page::Start : Page::Rack;
@@ -545,6 +563,8 @@ void WyattRackEditor::layout()
     for (int s = 0; s < kNumSlots; ++s) slots[(size_t) s]->setBounds (306, juce::roundToInt (240 + (float) s * 61.5f), 944, 60);
     modulePage->setBounds (290, 194, 976, 538);
 
+    for (int m = 0; m < kNumMacros; ++m) macroKnobs[m].setBounds (540 + m * 140, 199, 136, 38);
+    bakeBtn.setBounds (1156, 203, 80, 28);
     inKnob.setBounds (810, 752, 120, 44);
     outKnob.setBounds (940, 752, 120, 44);
     bypassBtn.setBounds (1150, 757, 100, 34);
@@ -559,6 +579,8 @@ void WyattRackEditor::showPage (Page pg)
     for (juce::Component* c : { (juce::Component*) &bigPrompt, (juce::Component*) &bigCreateBtn, (juce::Component*) &rackBtn }) c->setVisible (start);
     for (auto& e : examples) e.btn->setVisible (start);
     for (auto& s : slots) s->setVisible (rack);
+    for (auto& k : macroKnobs) k.setVisible (rack);
+    bakeBtn.setVisible (rack);
     modulePage->setVisible (mod);
     if (! mod) modulePage->hideModule();
     if (start) bigPrompt.grabKeyboardFocus();
@@ -596,9 +618,28 @@ void WyattRackEditor::closeSettings() { settings.reset(); refreshAll(); }
 
 void WyattRackEditor::changeListenerCallback (juce::ChangeBroadcaster*) { refreshAll(); }
 
+void WyattRackEditor::refreshMacros()
+{
+    bool any = false, moved = false;
+    for (int m = 0; m < kNumMacros; ++m)
+    {
+        auto& k = macroKnobs[m];
+        const bool used = proc.macroUsed (m);
+        any |= used;
+        if (used && std::abs (k.slider.getValue() - 50.0) > 0.05) moved = true;
+        k.name = used ? proc.macroName (m) : "MACRO " + juce::String (m + 1);
+        k.setEnabled (used);
+        k.setAlpha (used ? 1.0f : 0.35f);
+        k.slider.setTooltip (used ? proc.macroTip (m) : juce::String ("Free macro: ask for a sound and the rack names it and gives it a job"));
+        k.repaint();
+    }
+    bakeBtn.setEnabled (any && moved);
+}
+
 void WyattRackEditor::refreshAll()
 {
     for (auto& s : slots) s->refresh();
+    refreshMacros();
     for (int i = 0; i < 3; ++i) modeBtns[i].setToggleState ((int) proc.aiMode() == i, juce::dontSendNotification);
     undoBtn.setEnabled (proc.canUndo()); redoBtn.setEnabled (proc.canRedo());
     const bool busy = proc.isThinking();
@@ -625,6 +666,11 @@ void WyattRackEditor::timerCallback()
     inMeter = std::max (proc.rack.inPeak.load(), inMeter * 0.85f);
     outMeter = std::max (proc.rack.outPeak.load(), outMeter * 0.85f);
     content.repaint (290, 742, 520, 64);
+    {   // BAKE só acende com alguma macro fora do meio
+        bool moved = false;
+        for (int m = 0; m < kNumMacros; ++m) if (proc.macroUsed (m) && std::abs (macroKnobs[m].slider.getValue() - 50.0) > 0.05) moved = true;
+        if (bakeBtn.isEnabled() != moved) bakeBtn.setEnabled (moved);
+    }
     if (proc.isThinking()) { ++thinkingPhase; content.repaint (290, 140, 976, 40); content.repaint (312, 510, 932, 206); }
     undoBtn.setEnabled (proc.canUndo()); redoBtn.setEnabled (proc.canRedo());
 }
@@ -746,7 +792,7 @@ void WyattRackEditor::paintContent (juce::Graphics& g)
             drawPanel (g, { 290, 194, 976, 538 });
             drawTitle (g, "SIGNAL CHAIN", 312, 200);
             g.setFont (bc (12.5f, 600)); g.setColour (juce::Colour (0xffa9a49c));
-            g.drawText (u8 ("8 SLOTS  \xc2\xb7  \xe2\x96\xb2\xe2\x96\xbc TO REORDER  \xc2\xb7  OPEN TO EXPAND"), 480, 210, 500, 16, juce::Justification::left);
+            g.drawText ("M A C R O S", 462, 210, 70, 16, juce::Justification::left);
         }
     }
 

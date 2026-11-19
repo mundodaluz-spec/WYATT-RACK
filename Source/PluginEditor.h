@@ -112,6 +112,8 @@ public:
     void openModule (int slot);
     Page page() const { return currentPage; }
     float contentScale() const { return scale; }
+    ui::Knob macroKnobs[kNumMacros];
+    ui::KeyButton bakeBtn { "BAKE", ui::KeyKind::Dark, ui::KeyKind::Dark, 13 };
 
 private:
     class Content : public juce::Component
@@ -142,9 +144,10 @@ private:
     struct Example { juce::String tag, text; std::unique_ptr<juce::Button> btn; };
     std::vector<Example> examples;
     ui::Knob inKnob, outKnob;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> inAtt, outAtt;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> inAtt, outAtt, macroAtt[kNumMacros];
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> bypassAtt;
     std::unique_ptr<juce::Component> settings;
+    void refreshMacros();
     std::unique_ptr<juce::FileChooser> chooser;
     Page currentPage = Page::Rack;
     bool goRackAfterAnswer = false;
