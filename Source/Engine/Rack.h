@@ -7,6 +7,27 @@
 
 namespace wr
 {
+// Últimas amostras de saída de um slot, para osciloscópio/analisador da tela.
+// Escrita só pela thread de áudio; a tela lê uma cópia (pode pegar uma amostra "rasgada", sem problema para desenho).
+struct ScopeRing
+{
+    static constexpr int kSize = 4096;   // potência de 2
+    float l[kSize] {}, r[kSize] {};
+    std::atomic<int> write { 0 };
+    void push (const float* L, const float* R, int n)
+    {
+        int w = write.load (std::memory_order_relaxed);
+        for (int i = 0; i < n; ++i) { l[w] = L[i]; r[w] = R[i]; w = (w + 1) & (kSize - 1); }
+        write.store (w, std::memory_order_release);
+    }
+    // Copia as últimas n amostras (n ≤ kSize), da mais antiga para a mais nova.
+    void read (float* outL, float* outR, int n) const
+    {
+        const int w = write.load (std::memory_order_acquire);
+        for (int i = 0; i < n; ++i) { const int k = (w - n + i) & (kSize - 1); outL[i] = l[k]; outR[i] = r[k]; }
+    }
+};
+
 // Ponteiros para os valores (normalizados 0..1) dos parâmetros de um slot.
 struct SlotParams
 {
@@ -24,7 +45,11 @@ public:
     void process (float* L, float* R, int n, const Ctx& ctx);
 
     SlotParams params;
-    std::atomic<float> activity { 0.0f };  // nível de saída, para a tela
+    std::atomic<float> activity { 0.0f };  // nível de saída (pico do bloco de áudio), para a tela
+    std::atomic<float> inLevel { 0.0f };   // nível de entrada (pico)
+    std::atomic<float> live { 0.0f };      // valor ao vivo do bloco (ver Block::live)
+    std::atomic<bool> scopeOn { false };   // a tela liga quando o painel deste slot está aberto
+    ScopeRing scope;
 
     // Leitura direta, para os testes.
     int currentType() const { return curType; }

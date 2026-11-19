@@ -67,9 +67,19 @@ void Slot::process (float* L, float* R, int n, const Ctx& ctx)
         xfadeLeft = xfadeLen;
     }
 
+    {
+        float pin = 0;
+        for (int i = 0; i < n; ++i) pin = std::max (pin, std::max (std::abs (L[i]), std::abs (R[i])));
+        inLevel.store (pin, std::memory_order_relaxed);
+    }
     // Caminho direto: slot vazio ou desligado e parado → não toca no áudio.
     const bool idle = (curType == 0 || (! onT && onG <= 0.0f)) && xfadeLeft == 0;
-    if (idle) { activity.store (0.0f); return; }
+    if (idle)
+    {
+        activity.store (0.0f); live.store (0.0f);
+        if (scopeOn.load (std::memory_order_relaxed)) scope.push (L, R, n);
+        return;
+    }
 
     readTargets (tgt, curType);
     const auto& bi = info (curType);
@@ -135,6 +145,8 @@ void Slot::process (float* L, float* R, int n, const Ctx& ctx)
         for (int i = 0; i < m; ++i) peak = std::max (peak, std::max (std::abs (l[i]), std::abs (r[i])));
     }
     activity.store (peak);
+    if (curType > 0) live.store (blocks[(size_t) curType]->live(), std::memory_order_relaxed);
+    if (scopeOn.load (std::memory_order_relaxed)) scope.push (L, R, n);
 }
 
 // ------------------------------------------------------------------ Rack

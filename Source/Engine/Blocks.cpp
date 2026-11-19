@@ -66,6 +66,7 @@ class CompBlock final : public Block
     double sr = 48000;
     float det = 0, grDb = 0;
 public:
+    float live() const override { return -grDb; }
     void prepare (double s, int) override { sr = s; reset(); }
     void reset() override { det = 0; grDb = 0; }
     void process (float* L, float* R, int n, const float* p, const Ctx&) override
@@ -303,6 +304,7 @@ class ChorusBlock final : public Block
     DelayLine dl[2];
     float ph = 0, last[2] {};
 public:
+    float live() const override { return ph; }
     void prepare (double s, int) override { sr = s; dl[0].prepare ((int) (0.07 * sr)); dl[1].prepare ((int) (0.07 * sr)); reset(); }
     void reset() override { dl[0].reset(); dl[1].reset(); ph = 0; last[0] = last[1] = 0; }
     void process (float* L, float* R, int n, const float* p, const Ctx&) override
@@ -340,6 +342,7 @@ class ModBlock final : public Block
     float apS[2][6] {}, last[2] {}, ph = 0;
     DelayLine dl[2];
 public:
+    float live() const override { return ph; }
     void prepare (double s, int) override { sr = s; dl[0].prepare ((int) (0.03 * sr)); dl[1].prepare ((int) (0.03 * sr)); reset(); }
     void reset() override
     {
@@ -393,8 +396,9 @@ class FilterBlock final : public Block
 {
     double sr = 48000;
     Svf svf[2];
-    float ph = 0, env = 0;
+    float ph = 0, env = 0, lastF = 1000;
 public:
+    float live() const override { return lastF; }
     void prepare (double s, int) override { sr = s; reset(); }
     void reset() override { svf[0].reset(); svf[1].reset(); ph = 0; env = 0; }
     void process (float* L, float* R, int n, const float* p, const Ctx&) override
@@ -411,6 +415,7 @@ public:
             env = lvl > env ? eA * env + (1 - eA) * lvl : eR * env + (1 - eR) * lvl;
             const float mod = lfoD * std::sin ((float) (2 * kPi) * ph) + envD * std::min (1.0f, env * 4.0f);
             const float f = std::clamp (p[1] * std::pow (2.0f, mod), 20.0f, maxF);
+            lastF = f;
             const float g = std::tan ((float) kPi * f / (float) sr);
             float lp, bp, hp;
             svf[0].process (L[i], g, k, lp, bp, hp);
@@ -426,8 +431,9 @@ class DeEsserBlock final : public Block
 {
     double sr = 48000;
     Biquad side, band[2];
-    float env = 0, cacheF = -1;
+    float env = 0, cacheF = -1, lastRed = 0;
 public:
+    float live() const override { return lastRed; }
     void prepare (double s, int) override { sr = s; reset(); }
     void reset() override { side.reset(); band[0].reset(); band[1].reset(); env = 0; cacheF = -1; }
     void process (float* L, float* R, int n, const float* p, const Ctx&) override
@@ -446,6 +452,7 @@ public:
             env = s > env ? aA * env + (1 - aA) * s : aR * env + (1 - aR) * s;
             const float over = gainToDb (env) - thr;
             const float red = std::clamp (over * 0.75f, 0.0f, maxRed);
+            lastRed = red;
             const float g = dbToGain (-red);
             const float hL = band[0].process (L[i]), hR = band[1].process (R[i]);
             if (wide) { L[i] *= g; R[i] *= g; }
@@ -460,6 +467,7 @@ class GateBlock final : public Block
     double sr = 48000;
     float env = 0, g = 1; int holdLeft = 0; bool open = false;
 public:
+    float live() const override { return -gainToDb (std::max (g, 1.0e-5f)); }
     void prepare (double s, int) override { sr = s; reset(); }
     void reset() override { env = 0; g = 1; holdLeft = 0; open = false; }
     void process (float* L, float* R, int n, const float* p, const Ctx&) override
@@ -528,6 +536,7 @@ class TremoloBlock final : public Block
     double sr = 48000;
     float ph = 0, sq = 0.5f;
 public:
+    float live() const override { return ph; }
     void prepare (double s, int) override { sr = s; reset(); }
     void reset() override { ph = 0; sq = 0.5f; }
     void process (float* L, float* R, int n, const float* p, const Ctx& ctx) override
@@ -616,6 +625,7 @@ class LimiterBlock final : public Block
     double sr = 48000;
     float g = 1;
 public:
+    float live() const override { return -gainToDb (std::max (g, 1.0e-5f)); }
     void prepare (double s, int) override { sr = s; reset(); }
     void reset() override { g = 1; }
     void process (float* L, float* R, int n, const float* p, const Ctx&) override

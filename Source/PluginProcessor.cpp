@@ -1,39 +1,40 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "UI/Labels.h"
 
 namespace wr
 {
 const std::vector<FactoryTreatment>& factoryTreatments()
 {
     static const std::vector<FactoryTreatment> f {
-        { "Rack vazio", "" },
-        { "Voz Gospel de Igreja", "voz gospel com reverb de igreja" },
-        { "Voz de Adoração", "voz de adoração bem espacial" },
-        { "Voz Trap", "voz trap" },
-        { "Voz Sertanejo", "voz sertanejo" },
-        { "Voz Pop na Cara", "voz pop na cara e brilhante" },
-        { "Voz R&B Aveludada", "voz r&b aveludada" },
-        { "Pregação / Podcast", "pregação limpa" },
+        { "Empty Rack", "" },
+        { "Gospel Church Vocal", "voz gospel com reverb de igreja" },
+        { "Worship Vocal", "voz de adoração bem espacial" },
+        { "Trap Vocal", "voz trap" },
+        { "Sertanejo Vocal", "voz sertanejo" },
+        { "Pop Vocal Up Front", "voz pop na cara e brilhante" },
+        { "Silky R&B Vocal", "voz r&b aveludada" },
+        { "Sermon / Podcast", "pregação limpa" },
         { "Adlibs", "adlibs" },
-        { "Backs Largos", "backs de adoração largos" },
-        { "Violão Aberto", "violão aberto e espacial" },
-        { "Bateria Suja", "bateria suja e larga" },
-        { "Baixo Gordo", "baixo gordo" },
-        { "Guitarra Rock", "guitarra rock" },
-        { "Teclado Gospel", "teclado gospel com chorus" },
-        { "Master Gospel", "master gospel com pressão" },
-        { "Telefone", "telefone" },
-        { "Rádio Antigo", "rádio antigo" },
-        { "Debaixo d'Água", "debaixo d'água" },
-        { "Fantasma", "efeito fantasma" },
-        { "Anos 80", "anos 80 sonhador" },
-        { "Lo-fi", "lo-fi" },
-        { "Megafone", "megafone" },
+        { "Wide Backing Vocals", "backs de adoração largos" },
+        { "Open Acoustic Guitar", "violão aberto e espacial" },
+        { "Dirty Drums", "bateria suja e larga" },
+        { "Fat Bass", "baixo gordo" },
+        { "Rock Guitar", "guitarra rock" },
+        { "Gospel Keys", "teclado gospel com chorus" },
+        { "Gospel Master", "master gospel com pressão" },
+        { "Telephone", "telefone" },
+        { "Old Radio", "rádio antigo" },
+        { "Underwater", "debaixo d'água" },
+        { "Ghost Voice", "efeito fantasma" },
+        { "80s Dream", "anos 80 sonhador" },
+        { "Lo-Fi", "lo-fi" },
+        { "Megaphone", "megafone" },
     };
     return f;
 }
 
-static const char* kSettingsName = "WYATT RACK";
+static const char* kSettingsName = "WMusic Rack";
 
 // ==================================================================== parâmetros
 juce::String WyattRackProcessor::slotId (int slot, const char* what)
@@ -50,14 +51,14 @@ juce::AudioProcessorValueTreeState::ParameterLayout WyattRackProcessor::createLa
 {
     juce::AudioProcessorValueTreeState::ParameterLayout l;
     juce::StringArray typeNames;
-    for (int t = 0; t < kNumTypes; ++t) typeNames.add (juce::String::fromUTF8 (info (t).name));
+    for (int t = 0; t < kNumTypes; ++t) typeNames.add (juce::String (ui::blockName (t)));
 
     for (int s = 0; s < kNumSlots; ++s)
     {
         const juce::String pre = "Slot " + juce::String (s + 1) + " ";
         auto g = std::make_unique<juce::AudioProcessorParameterGroup> ("slot" + juce::String (s + 1), "Slot " + juce::String (s + 1), " | ");
-        g->addChild (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { slotId (s, "tipo"), 1 }, pre + "Bloco", typeNames, 0));
-        g->addChild (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { slotId (s, "on"), 1 }, pre + "Liga", true));
+        g->addChild (std::make_unique<juce::AudioParameterChoice> (juce::ParameterID { slotId (s, "tipo"), 1 }, pre + "Block", typeNames, 0));
+        g->addChild (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { slotId (s, "on"), 1 }, pre + "On", true));
         g->addChild (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { slotId (s, "mix"), 1 }, pre + "Mix",
                          juce::NormalisableRange<float> (0, 100, 0.1f), 100.0f,
                          juce::AudioParameterFloatAttributes().withLabel ("%")));
@@ -71,25 +72,25 @@ juce::AudioProcessorValueTreeState::ParameterLayout WyattRackProcessor::createLa
                     auto* tp = self->apvts.getRawParameterValue (slotId (s, "tipo"));
                     const int t = tp ? (int) tp->load() : 0;
                     const auto& ps = info (t).params[(size_t) k];
-                    if (! ps.used()) return juce::String::fromUTF8 ("—");
-                    return juce::String::fromUTF8 (ps.format (ps.toReal (v)).c_str());
+                    if (! ps.used()) return "-";
+                    return juce::String (ui::formatValue (t, k, ps.toReal (v)));
                 });
             g->addChild (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { slotId (s, key[k]), 1 }, pre + "P" + juce::String (k + 1),
                              juce::NormalisableRange<float> (0, 1), 0.0f, attr));
         }
         l.add (std::move (g));
     }
-    l.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "entrada", 1 }, "Entrada", juce::NormalisableRange<float> (-24, 24, 0.1f), 0.0f,
+    l.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "entrada", 1 }, "Input", juce::NormalisableRange<float> (-24, 24, 0.1f), 0.0f,
                                                         juce::AudioParameterFloatAttributes().withLabel ("dB")));
-    l.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "saida", 1 }, juce::String::fromUTF8 ("Saída"), juce::NormalisableRange<float> (-24, 24, 0.1f), 0.0f,
+    l.add (std::make_unique<juce::AudioParameterFloat> (juce::ParameterID { "saida", 1 }, "Output", juce::NormalisableRange<float> (-24, 24, 0.1f), 0.0f,
                                                         juce::AudioParameterFloatAttributes().withLabel ("dB")));
     l.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { "bypass", 1 }, "Bypass", false));
     return l;
 }
 
 WyattRackProcessor::WyattRackProcessor()
-    : AudioProcessor (BusesProperties().withInput ("Entrada", juce::AudioChannelSet::stereo(), true)
-                                       .withOutput (juce::String::fromUTF8 ("Saída"), juce::AudioChannelSet::stereo(), true)),
+    : AudioProcessor (BusesProperties().withInput ("Input", juce::AudioChannelSet::stereo(), true)
+                                       .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "WYATT_RACK", createLayout (this))
 {
     for (int s = 0; s < kNumSlots; ++s)
@@ -105,6 +106,7 @@ WyattRackProcessor::WyattRackProcessor()
     rack.outGainDb = outDb = apvts.getRawParameterValue ("saida");
     rack.bypass = bypassP = apvts.getRawParameterValue ("bypass");
 
+    migrateFromWyattRack();
     if (auto s = openSettings()) mode = (AiMode) juce::jlimit (0, 2, s->getIntValue ("modoIA", (int) AiMode::Hibrido));
 }
 
@@ -144,6 +146,7 @@ void WyattRackProcessor::processBlock (juce::AudioBuffer<float>& buf, juce::Midi
     if (auto* ph = getPlayHead())
         if (auto pos = ph->getPosition())
             if (auto bpm = pos->getBpm()) ctx.bpm = *bpm;
+    hostBpm.store (ctx.bpm, std::memory_order_relaxed);
 
     analyzer.process (L, R, n);
     if (R != nullptr) rack.process (L, R, n, ctx);
@@ -298,6 +301,29 @@ void WyattRackProcessor::setCurrentProgram (int i)
 }
 
 // ==================================================================== assistente
+// Antes "WYATT RACK": traz a chave da IA, o modo e os tratamentos salvos na primeira vez.
+void WyattRackProcessor::migrateFromWyattRack()
+{
+    auto newLib = libraryFolder();
+    auto oldLib = newLib.getParentDirectory().getParentDirectory().getChildFile ("WYATT RACK").getChildFile ("Tratamentos");
+    if (oldLib.isDirectory() && ! newLib.isDirectory())
+    {
+        newLib.createDirectory();
+        for (auto& f : oldLib.findChildFiles (juce::File::findFiles, false, "*.wyrack"))
+            f.copyFileTo (newLib.getChildFile (f.getFileName()));
+    }
+    auto settings = openSettings();
+    if (settings && ! settings->containsKey ("chaveIA"))
+    {
+        juce::PropertiesFile::Options o = settings->getOptions();
+        o.applicationName = "WYATT RACK";
+        juce::PropertiesFile old (o);
+        for (auto* k : { "chaveIA", "modeloIA", "modoIA" })
+            if (old.containsKey (k)) settings->setValue (k, old.getValue (k));
+        settings->saveIfNeeded();
+    }
+}
+
 std::unique_ptr<juce::PropertiesFile> WyattRackProcessor::openSettings() const
 {
     juce::PropertiesFile::Options o;
@@ -313,7 +339,7 @@ std::unique_ptr<juce::PropertiesFile> WyattRackProcessor::openSettings() const
 // A chave fica só neste computador, misturada (não é criptografia forte, mas não aparece em texto puro).
 static juce::String scramble (const juce::String& s, bool enc)
 {
-    const juce::String salt = "WYATT-RACK-SOLI-DEO-GLORIA";
+    const juce::String salt = "WYATT-RACK-SOLI-DEO-GLORIA";   // não mudar: chaves já salvas usam este sal
     if (enc)
     {
         juce::MemoryBlock mb (s.toRawUTF8(), s.getNumBytesAsUTF8());
@@ -376,7 +402,7 @@ namespace
 class AskThread final : public juce::Thread
 {
 public:
-    explicit AskThread (std::function<void()> f) : juce::Thread ("WYATT RACK IA"), fn (std::move (f)) {}
+    explicit AskThread (std::function<void()> f) : juce::Thread ("WMusic Rack AI"), fn (std::move (f)) {}
     void run() override { fn(); }
 private:
     std::function<void()> fn;
@@ -486,7 +512,7 @@ void WyattRackProcessor::waitForAssistant (int ms)
 juce::File WyattRackProcessor::libraryFolder()
 {
     return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
-        .getChildFile ("WYATT Sounds").getChildFile ("WYATT RACK").getChildFile ("Tratamentos");
+        .getChildFile ("WYATT Sounds").getChildFile ("WMusic Rack").getChildFile ("Presets");
 }
 
 bool WyattRackProcessor::saveToLibrary (const juce::String& nameIn)
@@ -498,7 +524,7 @@ bool WyattRackProcessor::saveToLibrary (const juce::String& nameIn)
     {
         o->setProperty ("nome", nameIn.trim());
         o->setProperty ("pedido", lastPromptText);
-        o->setProperty ("app", "WYATT RACK");
+        o->setProperty ("app", "WMusic Rack");
         o->setProperty ("versao", 1);
     }
     auto dir = libraryFolder();

@@ -1,4 +1,4 @@
-// WYATT RACK — processador do plugin
+// WMusic Rack (antes WYATT RACK) — processador do plugin
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "Engine/Rack.h"
@@ -36,7 +36,7 @@ public:
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
-    const juce::String getName() const override { return "WYATT RACK"; }
+    const juce::String getName() const override { return "WMusic Rack"; }
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     double getTailLengthSeconds() const override { return 12.0; }
@@ -90,6 +90,7 @@ public:
     // ---- medidores
     Rack rack;
     float slotActivity (int s) const { return rack.slots[(size_t) s].activity.load(); }
+    std::atomic<double> hostBpm { 120.0 };
 
     // Testes: espera a IA online terminar (bloqueia).
     void waitForAssistant (int ms);
@@ -103,6 +104,7 @@ private:
     void finishAnswer (const juce::String& prompt, const BrainResult& local, const CloudResult* cloud, const Treatment& before);
     CloudConfig cloudConfig() const;
     std::unique_ptr<juce::PropertiesFile> openSettings() const;
+    void migrateFromWyattRack();
 
     std::atomic<float>* inDb = nullptr;
     std::atomic<float>* outDb = nullptr;
