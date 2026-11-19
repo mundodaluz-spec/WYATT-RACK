@@ -53,6 +53,12 @@ jobs:
           mkdir -p capturas
           if [ "$RUNNER_OS" == "Linux" ]; then xvfb-run -a "$EXE" capturas; else "$EXE" capturas; fi
 
+      - name: Estresse (áudio e parâmetros ao mesmo tempo)
+        shell: bash
+        run: |
+          EXE=$(find build -type f \( -name FuzzTests -o -name FuzzTests.exe \) -path "*Release*" | head -1)
+          if [ "$RUNNER_OS" == "Linux" ]; then xvfb-run -a "$EXE"; else "$EXE"; fi
+
       - name: pluginval (nível 7)
         shell: bash
         run: |

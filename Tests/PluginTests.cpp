@@ -392,7 +392,8 @@ static void testMacros()
         const auto playing = p.currentTreatment().baked();
         const auto* rv0 = playing.find (BlockType::Reverb);
         p.ask ("mais reverb");
-        const auto* rv1 = p.currentTreatment().find (BlockType::Reverb);
+        const auto now = p.currentTreatment();          // cópia viva: o ponteiro abaixo aponta para ela
+        const auto* rv1 = now.find (BlockType::Reverb);
         CHECK (rv0 && rv1 && rv1->mix > rv0->mix, "\"mais reverb\" parte do som com a macro (%.1f → %.1f)\n", rv0 ? rv0->mix : -1.f, rv1 ? rv1->mix : -1.f);
         CHECK (std::abs (macroNorm (p, 0) - 0.5f) < 1e-4f, "depois do ajuste as macros recomeçam no meio\n");
         bool keptCalor = false; for (int m = 0; m < kNumMacros; ++m) if (p.macroName (m) == "CALOR") keptCalor = true;
